@@ -53,6 +53,32 @@ app.use((req, res, next) => {
 export { paginateList };
 export type { PaginatedResult };
 
+function getAuthOrClientStatusCode(errMessage: string): number {
+  const m = (errMessage || '').toLowerCase();
+  if (
+    m.includes('role violation') ||
+    m.includes('department restriction') ||
+    m.includes('unauthorized') ||
+    m.includes('restricted') ||
+    m.includes('dual control violation') ||
+    m.includes('segregation') ||
+    m.includes('only registered makers') ||
+    m.includes('only authorized makers') ||
+    m.includes('only checkers') ||
+    m.includes('only registered checkers') ||
+    m.includes('only the maker') ||
+    m.includes('only auditor') ||
+    m.includes('review denied') ||
+    m.includes('denied')
+  ) {
+    return 403;
+  }
+  if (m.includes('not found')) {
+    return 404;
+  }
+  return 400;
+}
+
 // -------------------------------------------------------------
 // REGULATORY API ROUTES
 // -------------------------------------------------------------
@@ -122,7 +148,7 @@ app.post('/api/regulatory/submissions', (req, res) => {
     const submission = submissionService.createSubmission(reportKey, activeUser);
     res.status(201).json(submission);
   } catch (err: any) {
-    res.status(400).json({ error: err.message });
+    res.status(getAuthOrClientStatusCode(err.message)).json({ error: err.message });
   }
 });
 
@@ -134,7 +160,7 @@ app.put('/api/regulatory/submissions/:id', (req, res) => {
     const updated = submissionService.updateDraft(req.params.id, values || {}, dynamicRows || {}, activeUser);
     res.json(updated);
   } catch (err: any) {
-    res.status(400).json({ error: err.message });
+    res.status(getAuthOrClientStatusCode(err.message)).json({ error: err.message });
   }
 });
 
@@ -144,7 +170,7 @@ app.post('/api/regulatory/submissions/:id/validate', (req, res) => {
     const summary = submissionService.validateSubmission(req.params.id);
     res.json(summary);
   } catch (err: any) {
-    res.status(400).json({ error: err.message });
+    res.status(getAuthOrClientStatusCode(err.message)).json({ error: err.message });
   }
 });
 
@@ -156,7 +182,7 @@ app.post('/api/regulatory/submissions/:id/submit', (req, res) => {
     const updated = submissionService.submitToChecker(req.params.id, activeUser, comment);
     res.json(updated);
   } catch (err: any) {
-    res.status(400).json({ error: err.message });
+    res.status(getAuthOrClientStatusCode(err.message)).json({ error: err.message });
   }
 });
 
@@ -172,7 +198,7 @@ app.post('/api/regulatory/submissions/:id/review', (req, res) => {
     const updated = submissionService.reviewSubmission(req.params.id, action, activeUser, comment);
     res.json(updated);
   } catch (err: any) {
-    res.status(400).json({ error: err.message });
+    res.status(getAuthOrClientStatusCode(err.message)).json({ error: err.message });
   }
 });
 
@@ -184,7 +210,7 @@ app.post('/api/regulatory/submissions/:id/deliver', async (req, res) => {
     const result = await submissionService.deliverToNBE(req.params.id, activeUser);
     res.json(result);
   } catch (err: any) {
-    res.status(400).json({ error: err.message });
+    res.status(getAuthOrClientStatusCode(err.message)).json({ error: err.message });
   }
 });
 
@@ -439,7 +465,11 @@ app.get('/api/users', (req, res) => {
 });
 
 app.post('/api/users/:id/status', (req, res) => {
-  const { status, adminName } = req.body;
+  const { status, adminName, user } = req.body;
+  if (user && user.role !== 'ADMIN') {
+    res.status(403).json({ error: 'Only ADMIN role can update user authorization status.' });
+    return;
+  }
   const result = userService.updateUserStatus(req.params.id, status, adminName || 'System Administrator');
   if (result.success && result.user) {
     auditService.log({
@@ -459,6 +489,11 @@ app.post('/api/users/:id/status', (req, res) => {
 });
 
 app.put('/api/users/:id', (req, res) => {
+  const { user } = req.body;
+  if (user && user.role !== 'ADMIN') {
+    res.status(403).json({ error: 'Only ADMIN role can modify user account details.' });
+    return;
+  }
   const result = userService.updateUser(req.params.id, req.body);
   if (result.success) {
     res.json(result);
@@ -468,6 +503,11 @@ app.put('/api/users/:id', (req, res) => {
 });
 
 app.delete('/api/users/:id', (req, res) => {
+  const user = (req.body && req.body.user) || (req.query && (req.query as any).user);
+  if (user && user.role !== 'ADMIN') {
+    res.status(403).json({ error: 'Only ADMIN role can delete user accounts.' });
+    return;
+  }
   const result = userService.deleteUser(req.params.id);
   if (result.success) {
     res.json(result);
@@ -493,7 +533,11 @@ app.get('/api/departments', (req, res) => {
 
 // Grant special cross-department access to a Maker or Checker
 app.post('/api/users/:id/special-access', (req, res) => {
-  const { reportKey, department, departments, reason, expiresAt, adminName } = req.body;
+  const { reportKey, department, departments, reason, expiresAt, adminName, user } = req.body;
+  if (user && user.role !== 'ADMIN') {
+    res.status(403).json({ error: 'Only ADMIN role can grant cross-department special access.' });
+    return;
+  }
   const result = userService.grantSpecialAccess(
     req.params.id,
     { reportKey, department, departments, reason, expiresAt },
@@ -523,6 +567,11 @@ app.post('/api/users/:id/special-access', (req, res) => {
 
 // Revoke special cross-department access
 app.delete('/api/users/:id/special-access/:grantId', (req, res) => {
+  const user = (req.body && req.body.user) || (req.query && (req.query as any).user);
+  if (user && user.role !== 'ADMIN') {
+    res.status(403).json({ error: 'Only ADMIN role can revoke cross-department special access.' });
+    return;
+  }
   const adminName = (req.query.adminName as string) || 'System Administrator';
   const result = userService.revokeSpecialAccess(req.params.id, req.params.grantId, adminName);
   if (result.success && result.user) {

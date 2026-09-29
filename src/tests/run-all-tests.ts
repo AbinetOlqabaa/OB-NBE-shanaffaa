@@ -344,6 +344,7 @@ import { runAuditorWorkflowTests } from './auditor-workflow.test.ts';
 import { runDesignSystemColorsTests } from './design-system-and-colors.test.ts';
 import { runPaginationSuiteTests } from './pagination-suite.test.ts';
 import { runPhase4RegressionHardeningTests } from './phase4-regression-hardening.test.ts';
+import { runPhase5FinalVerificationTests } from './phase5-final-verification.test.ts';
 
 async function runFullApplicationTestSuite() {
   runRegulatoryCoreTests();
@@ -358,6 +359,7 @@ async function runFullApplicationTestSuite() {
   await runDesignSystemColorsTests();
   await runPaginationSuiteTests();
   await runPhase4RegressionHardeningTests();
+  await runPhase5FinalVerificationTests();
 
   console.log('\n========================================================================');
   console.log('✅ ALL COMPREHENSIVE AUTOMATED TEST SUITES PASSED CLEANLY (100% SUCCESS)');

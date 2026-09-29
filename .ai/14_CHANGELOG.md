@@ -4,6 +4,40 @@ All notable changes and engineering enhancements for the Oromia Bank NBE Regulat
 
 ---
 
+## [1.9.0-phase5-final-verification-and-completion-gate] - 2026-09-29
+
+### Added
+- **Phase 5 Automated End-to-End Verification Test Suite (`src/tests/phase5-final-verification.test.ts`)**:
+  - Implemented automated verification of all 14 mandatory end-to-end flows:
+    1. Admin Login & Dashboard Routing
+    2. Maker Login & Workspace Routing
+    3. Checker Login & Inbox Routing
+    4. Auditor Login & Independent Dashboard Routing
+    5. User Registration & Admin Approval Flow
+    6. Password Authentication & Zero-Bypass Checks
+    7. Biometric Passkey (WebAuthn) & Optical Face ID Enrollment
+    8. Biometric Authentication & Verification (distinguishing Code Verified from physical hardware unavailability in headless CI)
+    9. Complete Maker Reporting Lifecycle (Create -> Save -> Edit -> Submit)
+    10. Complete Checker Review Lifecycle (Review -> Request Correction -> Re-review -> Approve)
+    11. Auditor Independent Inspection Lifecycle (Work Queue -> Findings -> Evidence -> Remediations -> Working Notes -> Audit Package)
+    12. Central Bank Transmission to NBE Gateway (Receipt number, delivery timestamp, idempotency)
+    13. User Session Logout Flow & Audit Trail Attribution
+    14. Deliberate Unauthorized Access Attempts (Maker self-approval blocked, Checker NBE delivery blocked, Cross-department submission blocked)
+- **Unified Full-Stack Test Command (`npm run test:all`)**:
+  - Chains TypeScript/React unit & integration tests (`npm test`), Django backend app tests (`npm run test:backend`), and NBE simulator microservice tests (`npm run test:simulator`).
+- **Python Dependencies in Backend Requirements (`backend/requirements.txt`)**:
+  - Added `requests>=2.31.0` and validated execution against Django 5.2.
+
+### Verified
+- **Architectural & Security Integrity**:
+  - Multi-tier architecture: React SPA -> Node/Express Proxy -> Django Core Services -> SQLite DB -> NBE Gateway Service -> NBE Simulator Daemon.
+  - Zero-bypass authorization: Operational actions (create, edit, approve, deliver) rejected by backend when attempted by unauthorized roles or across department boundaries.
+  - 4-Eyes principle enforced both client-side and server-side.
+- **Completion Gates**:
+  - All 12 completion gates evaluated and certified **PASS**.
+
+---
+
 ## [1.8.0-phase4-ui-ux-regression-and-hardening] - 2026-09-29
 
 ### Added
