@@ -235,7 +235,7 @@ export interface UserSession {
   id: string;
   name: string;
   email: string;
-  role: "MAKER" | "CHECKER" | "ADMIN" | "NBE_OFFICER";
+  role: "MAKER" | "CHECKER" | "ADMIN" | "NBE_OFFICER" | "AUDITOR";
   institutionCode: string;
   status?: "ACTIVE" | "PENDING_APPROVAL" | "DISABLED";
   department?: string;

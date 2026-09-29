@@ -91,6 +91,33 @@ export const BottomNavigation: React.FC<BottomNavigationProps> = ({
             badge: null,
           },
         ];
+      case 'AUDITOR':
+        return [
+          {
+            id: 'AUDIT_TRAIL' as ViewTab,
+            label: 'Audit',
+            icon: History,
+            badge: null,
+          },
+          {
+            id: 'PHASE2_SSOT' as ViewTab,
+            label: 'SSOT',
+            icon: Database,
+            badge: null,
+          },
+          {
+            id: 'DOCUMENTATION' as ViewTab,
+            label: 'Specs',
+            icon: HelpCircle,
+            badge: null,
+          },
+          {
+            id: 'SYSTEM_HEALTH' as ViewTab,
+            label: 'Health',
+            icon: History,
+            badge: null,
+          },
+        ];
       case 'MAKER':
       default:
         return [

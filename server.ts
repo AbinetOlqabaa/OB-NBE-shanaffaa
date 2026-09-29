@@ -238,13 +238,13 @@ app.get('/api/regulatory/submissions/:id/export/xlsx', (req, res) => {
 });
 
 // -------------------------------------------------------------
-// USER AUTHENTICATION & ACCESS CONTROL (ADMIN, MAKER, CHECKER)
+// USER AUTHENTICATION & ACCESS CONTROL (ADMIN, MAKER, CHECKER, AUDITOR)
 // -------------------------------------------------------------
 
 app.post('/api/auth/login', (req, res) => {
   const { email, password } = req.body;
-  if (!email) {
-    res.status(400).json({ success: false, message: 'Email is required' });
+  if (!email || !password) {
+    res.status(400).json({ success: false, message: 'Corporate email and password are required to sign in.' });
     return;
   }
   const result = userService.login(email, password);
@@ -263,6 +263,30 @@ app.post('/api/auth/login', (req, res) => {
   } else {
     res.status(401).json(result);
   }
+});
+
+// Development Seed Data Reset Endpoint
+app.post('/api/auth/seed-data/reset', (req, res) => {
+  const result = userService.resetDevelopmentSeedData();
+  auditService.log({
+    actorId: 'system_dev',
+    actorName: 'Development Seeder',
+    actorRole: 'ADMIN',
+    action: 'SEED_DATA_RESET',
+    entityType: 'SYSTEM',
+    entityId: 'seed_users',
+    correlationId: `corr_seed_${Date.now()}`,
+    details: 'Development seed accounts re-initialized with zero pre-seeded biometrics',
+  });
+  res.json(result);
+});
+
+// Development Seed Data Reference Endpoint
+app.get('/api/auth/seed-data', (req, res) => {
+  res.json({
+    success: true,
+    users: userService.getDevelopmentSeedSummary(),
+  });
 });
 
 app.post('/api/auth/register', (req, res) => {

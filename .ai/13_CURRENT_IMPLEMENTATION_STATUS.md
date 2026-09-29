@@ -84,7 +84,30 @@ The automated test runner (`npx tsx src/tests/run-all-tests.ts`) validates the f
 
 ---
 
-## 5. Verification Commands & Results
+## 5. Phase 2 Authentication, Zero-Bypass & Development Seed Data
+
+1. **One-Click Role Login Removal**:
+   - Completely excised the `ONE-CLICK ROLE LOGIN (TESTING)` visual button block and `handleQuickPreset` helper from `LoginPage.tsx`.
+   - Replaced with a professional collapsible `Development Test Accounts Reference` that only populates the email field, requiring legitimate password entry or authentic biometric verification.
+2. **Elimination of Bypass Logic**:
+   - Enforced required password validation on `/api/auth/login` (rejects missing/empty passwords with HTTP 400).
+   - Removed the runtime auto-provisioning bypass in `useBiometricAuth.ts` that previously synthesized simulated passkeys for unenrolled accounts.
+3. **Pristine Seed Accounts**:
+   - Seeded 10 authentic development accounts with password `password`.
+   - Set `biometricCredentials: []` on all accounts so authentic hardware WebAuthn and camera Face ID enrollment can be performed and tested against them.
+   - Added `auditor@oromiabank.com` (Role: `AUDITOR`, Dept: `Internal Audit & Regulatory Control`) alongside `ADMIN`, `MAKER`, and `CHECKER`.
+4. **Seed Reset Architecture**:
+   - Added `userService.resetDevelopmentSeedData()` and `POST /api/auth/seed-data/reset` to restore clean seed state at any time with audit trail logging.
+5. **Full Verification**:
+   - Verified password authentication for all 4 roles.
+   - Verified rejection of missing, empty, and wrong passwords.
+   - Verified un-enrolled rejection for fingerprint and face.
+   - Verified authentic fingerprint enrollment and authentication.
+   - Verified authentic optical face enrollment and authentication.
+
+---
+
+## 6. Verification Commands & Results
 ```bash
 # Static type analysis (0 errors)
 npm run lint

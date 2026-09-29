@@ -231,7 +231,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       description: 'Lakehouse & GL reconcile',
       badge: null,
       shortcut: `${modKey}+⇧+S`,
-      roles: ['ADMIN', 'MAKER', 'CHECKER'],
+      roles: ['ADMIN', 'MAKER', 'CHECKER', 'AUDITOR'],
     },
     {
       id: 'AUDIT_TRAIL' as ViewTab,
@@ -241,7 +241,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       description: 'Immutable event history',
       badge: null,
       shortcut: `${modKey}+⇧+L`,
-      roles: ['ADMIN', 'CHECKER', 'MAKER', 'NBE_OFFICER'],
+      roles: ['ADMIN', 'CHECKER', 'MAKER', 'NBE_OFFICER', 'AUDITOR'],
     },
     {
       id: 'SYSTEM_HEALTH' as ViewTab,
@@ -251,7 +251,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       description: 'Real-time sensors & enclave telemetry',
       badge: null,
       shortcut: `${modKey}+⇧+H`,
-      roles: ['ADMIN', 'MAKER', 'CHECKER', 'NBE_OFFICER'],
+      roles: ['ADMIN', 'MAKER', 'CHECKER', 'NBE_OFFICER', 'AUDITOR'],
     },
     {
       id: 'DOCUMENTATION' as ViewTab,
@@ -261,7 +261,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       description: 'Regulatory contracts & formulas',
       badge: null,
       shortcut: `${modKey}+⇧+D`,
-      roles: ['ADMIN', 'MAKER', 'CHECKER', 'NBE_OFFICER'],
+      roles: ['ADMIN', 'MAKER', 'CHECKER', 'NBE_OFFICER', 'AUDITOR'],
     },
   ];
 

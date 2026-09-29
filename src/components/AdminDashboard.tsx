@@ -1581,6 +1581,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   >
                     <option value="MAKER">MAKER</option>
                     <option value="CHECKER">CHECKER</option>
+                    <option value="AUDITOR">AUDITOR</option>
                     <option value="ADMIN">ADMIN</option>
                   </select>
                 </div>

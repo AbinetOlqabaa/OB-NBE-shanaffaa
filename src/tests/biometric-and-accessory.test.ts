@@ -113,6 +113,22 @@ export async function runBiometricAndAccessoryTests() {
   const targetUser = userService.getByEmail('abebe.kebede@oromiabank.com');
   assert(Boolean(targetUser), 'Target bank officer found in user registry');
 
+  // Verify all seed accounts start with zero pre-seeded biometrics
+  const allSeedUsers = [
+    'admin@oromiabank.com',
+    'abebe.kebede@oromiabank.com',
+    'chala.desta@oromiabank.com',
+    'auditor@oromiabank.com',
+  ];
+  for (const sEmail of allSeedUsers) {
+    const u = userService.getByEmail(sEmail)!;
+    assert(Boolean(u), `Seed user ${sEmail} exists`);
+    assert(
+      !u.biometricCredentials || u.biometricCredentials.length === 0,
+      `Seed user ${sEmail} has 0 pre-seeded fake biometrics (ready for genuine enrollment)`
+    );
+  }
+
   // 3. Real Biometric Registration & Verification (End-to-End)
   console.log('\n--- Real Biometric Registration & Enrolled Validation ---');
 
@@ -121,9 +137,15 @@ export async function runBiometricAndAccessoryTests() {
   const nonEnrolledAttempt = userService.verifyBiometric(nonEnrolledEmail, 'FINGERPRINT');
   assert(nonEnrolledAttempt.success === false, 'Biometric verification correctly rejects non-existent account');
 
-  const unEnrolledAttempt = userService.verifyBiometric(targetUser!.email, 'FACE');
-  assert(unEnrolledAttempt.success === false, 'Biometric verification rejects un-enrolled face biometrics');
-  assert(unEnrolledAttempt.message?.includes('registered') === true, 'Descriptive error message explains biometric passkey not registered');
+  // Test 3a2: Un-enrolled fingerprint on legitimate user rejects
+  const unEnrolledFpAttempt = userService.verifyBiometric(targetUser!.email, 'FINGERPRINT');
+  assert(unEnrolledFpAttempt.success === false, 'Biometric verification rejects un-enrolled fingerprint');
+  assert(unEnrolledFpAttempt.message?.includes('registered') === true, 'Descriptive error message explains fingerprint passkey not registered');
+
+  // Test 3a3: Un-enrolled face on legitimate user rejects
+  const unEnrolledFaceAttempt = userService.verifyBiometric(targetUser!.email, 'FACE');
+  assert(unEnrolledFaceAttempt.success === false, 'Biometric verification rejects un-enrolled face biometrics');
+  assert(unEnrolledFaceAttempt.message?.includes('registered') === true, 'Descriptive error message explains biometric passkey not registered');
 
   // Test 3b: Fingerprint Enrollment
   const fpRegResult = userService.registerBiometric(targetUser!.email, {

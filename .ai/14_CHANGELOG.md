@@ -4,6 +4,47 @@ All notable changes and engineering enhancements for the Oromia Bank NBE Regulat
 
 ---
 
+## [1.2.0-auth-seed-users] - 2026-09-28
+
+### Removed
+- **One-Click Role Login Visual Block**: Removed the testing shortcut button container (`ONE-CLICK ROLE LOGIN (TESTING)`) from `LoginPage.tsx`.
+- **Underlying Shortcut/Bypass Logic**:
+  - Removed `handleQuickPreset` and silent email default fallback in `LoginPage.tsx`.
+  - Removed auto-provisioning bypass in `useBiometricAuth.ts` which previously generated fake simulated passkeys for unenrolled accounts.
+  - Enforced strict password checks on `/api/auth/login` (missing password rejected with HTTP 400).
+  - Removed all fake pre-seeded biometric credentials from initial user accounts in `userService.ts`.
+
+### Added
+- **Authoritative Development Seed Accounts**:
+  - `admin@oromiabank.com` (Role: `ADMIN`, Dept: `Compliance & Legal Governance`, Password: `password`, Biometrics: `[]`).
+  - `abebe.kebede@oromiabank.com` (Role: `MAKER`, Dept: `Credit Operations & Portfolio Management`, Password: `password`, Biometrics: `[]`).
+  - `chala.desta@oromiabank.com` (Role: `CHECKER`, Dept: `Credit Operations & Portfolio Management`, Password: `password`, Biometrics: `[]`).
+  - `auditor@oromiabank.com` (Role: `AUDITOR`, Dept: `Internal Audit & Regulatory Control`, Password: `password`, Biometrics: `[]`).
+  - Additional users for Trade Services, Asset Recovery, and Pending Registration tests.
+- **Seed Data Management & Reset Architecture**:
+  - `userService.resetDevelopmentSeedData()` resets seed accounts cleanly.
+  - `userService.getDevelopmentSeedSummary()` outputs developer reference data.
+  - `POST /api/auth/seed-data/reset` server endpoint with non-repudiation audit logging.
+  - `GET /api/auth/seed-data` server endpoint for configuration tooling.
+- **Collapsible Development Test Reference UI**:
+  - Added clean reference accordion on `LoginPage.tsx` displaying accounts and roles.
+  - Provides "Use Email" filler (populates email only, preserving real password validation) and "Reset Seed Data" trigger.
+- **AUDITOR Role Workflow Integration**:
+  - Extended `UserRole` and `UserSession` to include `AUDITOR`.
+  - Configured `getInitialTabForRole` to redirect to `AUDIT_TRAIL`.
+  - Configured read-only supervisory access in `getAllowedReportKeysForUser` and `canCheckerReviewSubmission`.
+  - Integrated into `Sidebar`, `BottomNavigation`, `MobileBottomNav`, and `useSwipeGesture`.
+
+### Verified
+- **Password Authentication**: Verified all 4 roles authenticate; missing or incorrect passwords fail.
+- **Fingerprint Biometrics**: Verified unenrolled accounts reject; genuine WebAuthn enrollment and assertion succeed.
+- **Face ID Biometrics**: Verified unenrolled accounts reject; genuine optical camera enrollment and matching succeed; mismatched templates reject.
+- **Test Suite**: All 8 suites (`npx tsx src/tests/run-all-tests.ts`) passing 100% cleanly.
+- **Applet Compilation**: `compile_applet` passed.
+- **TypeScript Static Analysis**: `npm run lint` / `tsc --noEmit` passed with 0 errors.
+
+---
+
 ## [1.1.0-ui-ux] - 2026-09-28
 
 ### Added

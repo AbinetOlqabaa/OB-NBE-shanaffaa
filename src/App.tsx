@@ -77,6 +77,7 @@ export default function App() {
   const getInitialTabForRole = (role?: string): ViewTab => {
     if (role === 'ADMIN') return 'ADMIN_DASHBOARD';
     if (role === 'CHECKER') return 'CHECKER_INBOX';
+    if (role === 'AUDITOR') return 'AUDIT_TRAIL';
     return 'MAKER_WORKSPACE';
   };
 
