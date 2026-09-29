@@ -608,7 +608,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           >
             <FileSpreadsheet className="w-3.5 h-3.5" />
             <span>Reports Oversight Center</span>
-            <span className="ml-1 px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold bg-ob-indigo-700 text-white">
+            <span className="ml-1 px-1.5 py-0.2 rounded-md text-[10px] font-mono font-bold bg-ob-indigo-700 text-white">
               {submissions.length}
             </span>
           </button>
@@ -636,7 +636,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             <Clock className="w-3.5 h-3.5" />
             <span>Pending Authorizations</span>
             <span
-              className={`ml-1 px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold ${
+              className={`ml-1 px-1.5 py-0.2 rounded-md text-[10px] font-mono font-bold ${
                 pendingUsers.length > 0 ? 'bg-rose-500 text-white' : 'bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300'
               }`}
             >
@@ -676,7 +676,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           >
             <FolderTree className="w-3.5 h-3.5" />
             <span>Departments & Reports</span>
-            <span className="ml-1 px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold bg-ob-indigo-200 dark:bg-ob-indigo-800 text-ob-indigo-900 dark:text-ob-indigo-200">
+            <span className="ml-1 px-1.5 py-0.2 rounded-md text-[10px] font-mono font-bold bg-ob-indigo-200 dark:bg-ob-indigo-800 text-ob-indigo-900 dark:text-ob-indigo-200">
               {departments.length}
             </span>
           </button>
