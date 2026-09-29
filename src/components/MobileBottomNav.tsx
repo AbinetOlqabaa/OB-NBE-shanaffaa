@@ -16,6 +16,7 @@ import {
   HelpCircle,
   Menu,
   Activity,
+  ShieldAlert,
 } from 'lucide-react';
 
 interface NavItem {
@@ -74,10 +75,10 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
 
     if (currentUser.role === 'AUDITOR') {
       return [
+        { id: 'AUDITOR_DASHBOARD' as ViewTab, label: 'Auditor', icon: ShieldAlert },
         { id: 'AUDIT_TRAIL' as ViewTab, label: 'Audit', icon: History },
         { id: 'PHASE2_SSOT' as ViewTab, label: 'SSOT Lake', icon: Database },
         { id: 'DOCUMENTATION' as ViewTab, label: 'NBE Docs', icon: HelpCircle },
-        { id: 'SYSTEM_HEALTH' as ViewTab, label: 'Health', icon: Activity },
       ];
     }
 
@@ -94,7 +95,7 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
 
   return (
     <nav
-      className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-white/95 dark:bg-[#121428]/95 backdrop-blur-lg border-t border-slate-200 dark:border-[#22284D] pb-safe shadow-lg select-none transition-colors"
+      className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur-lg border-t border-slate-200 dark:border-slate-800 pb-safe shadow-lg select-none transition-colors"
       aria-label="Mobile Bottom Navigation"
     >
       <div className="grid grid-cols-5 items-center h-14 px-1">
