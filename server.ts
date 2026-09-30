@@ -25,6 +25,7 @@ import {
 import { paginateList, PaginatedResult } from './src/utils/paginationUtils.ts';
 import { configService } from './src/services/configService.ts';
 import { effectiveAccessEngine } from './src/services/effectiveAccessEngine.ts';
+import { bulkOperationsEngine } from './src/services/bulkOperationsEngine.ts';
 
 dotenv.config();
 
@@ -1721,6 +1722,142 @@ app.post('/api/phase2/generate', (req, res) => {
     res.json(generated);
   } catch (err: any) {
     res.status(400).json({ error: err.message });
+  }
+});
+
+// -------------------------------------------------------------
+// BULK OPERATIONS, IMPORT, EXPORT & FILE WORKFLOWS (PHASE 6)
+// -------------------------------------------------------------
+
+// 1. Dry-Run Parse & Validation Preview (No authoritative mutation)
+app.post('/api/bulk/dry-run', (req, res) => {
+  try {
+    const { targetType, format, payload, rawPayload, conflictStrategy, actor, page, pageSize } = req.body;
+    const actorInfo = actor || { id: 'usr_admin', name: 'Administrator', role: 'ADMIN' };
+    const content = payload || rawPayload;
+    if (!content) {
+      res.status(400).json({ error: 'Payload content is required for dry-run preview.' });
+      return;
+    }
+    const result = bulkOperationsEngine.generateDryRun({
+      targetType: targetType || 'USERS',
+      format: format || 'CSV',
+      rawPayload: content,
+      conflictStrategy: conflictStrategy || 'UPDATE',
+      actor: actorInfo,
+      page: page ? parseInt(String(page), 10) : 1,
+      pageSize: pageSize ? parseInt(String(pageSize), 10) : 20,
+    });
+    res.json(result);
+  } catch (err: any) {
+    const status = getAuthOrClientStatusCode(err.message);
+    res.status(status).json({ error: err.message });
+  }
+});
+
+// 2. Fetch Cached Dry-Run with custom pagination
+app.get('/api/bulk/dry-run/:dryRunId', (req, res) => {
+  const { dryRunId } = req.params;
+  const { page, page_size } = req.query as any;
+  const result = bulkOperationsEngine.getDryRun(
+    dryRunId,
+    page ? parseInt(String(page), 10) : 1,
+    page_size ? parseInt(String(page_size), 10) : 20
+  );
+  if (!result) {
+    res.status(404).json({ error: `Dry-run preview '${dryRunId}' not found or has expired.` });
+    return;
+  }
+  res.json(result);
+});
+
+// 3. Explicit Transactional Execution
+app.post('/api/bulk/execute', (req, res) => {
+  try {
+    const { dryRunId, mode, actor, confirmed } = req.body;
+    const actorInfo = actor || { id: 'usr_admin', name: 'Administrator', role: 'ADMIN' };
+    if (!dryRunId) {
+      res.status(400).json({ error: 'dryRunId is required. Preview must be performed first.' });
+      return;
+    }
+    if (!confirmed) {
+      res.status(400).json({ error: 'Explicit confirmation flag (confirmed: true) is mandatory.' });
+      return;
+    }
+    const result = bulkOperationsEngine.executeDryRun({
+      dryRunId,
+      mode: mode || 'ATOMIC',
+      actor: actorInfo,
+      confirmed: true,
+    });
+    res.json(result);
+  } catch (err: any) {
+    const status = getAuthOrClientStatusCode(err.message);
+    res.status(status).json({ error: err.message });
+  }
+});
+
+// 4. Bulk Actions on Selected Users
+app.post('/api/bulk/users/action', (req, res) => {
+  try {
+    const { userIds, action, payload, actor, mode } = req.body;
+    const actorInfo = actor || { id: 'usr_admin', name: 'Administrator', role: 'ADMIN' };
+    const result = bulkOperationsEngine.executeBulkUserAction({
+      userIds,
+      action,
+      payload,
+      actor: actorInfo,
+      mode: mode || 'ATOMIC',
+    });
+    res.json(result);
+  } catch (err: any) {
+    const status = getAuthOrClientStatusCode(err.message);
+    res.status(status).json({ error: err.message });
+  }
+});
+
+// 5. Bulk Actions on Selected Reports
+app.post('/api/bulk/reports/action', (req, res) => {
+  try {
+    const { reportKeys, action, payload, actor, mode } = req.body;
+    const actorInfo = actor || { id: 'usr_admin', name: 'Administrator', role: 'ADMIN' };
+    const result = bulkOperationsEngine.executeBulkReportAction({
+      reportKeys,
+      action,
+      payload,
+      actor: actorInfo,
+      mode: mode || 'ATOMIC',
+    });
+    res.json(result);
+  } catch (err: any) {
+    const status = getAuthOrClientStatusCode(err.message);
+    res.status(status).json({ error: err.message });
+  }
+});
+
+// 6. Authorized, Audited Bulk Export (CSV / JSON / XLSX)
+app.post('/api/bulk/export', (req, res) => {
+  try {
+    const { target, format, actor, filters, selectedIds } = req.body;
+    const actorInfo = actor || { id: 'usr_admin', name: 'Administrator', role: 'ADMIN' };
+    const exported = bulkOperationsEngine.exportData({
+      target: target || 'USERS',
+      format: format || 'CSV',
+      actor: actorInfo,
+      filters,
+      selectedIds,
+    });
+
+    res.setHeader('Content-Disposition', `attachment; filename="${exported.fileName}"`);
+    res.setHeader('Content-Type', exported.mimeType);
+    if (exported.format === 'XLSX') {
+      res.send(Buffer.from(exported.content as Uint8Array));
+    } else {
+      res.send(exported.content);
+    }
+  } catch (err: any) {
+    const status = getAuthOrClientStatusCode(err.message);
+    res.status(status).json({ error: err.message });
   }
 });
 

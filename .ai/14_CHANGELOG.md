@@ -4,6 +4,41 @@ All notable changes and engineering enhancements for the Oromia Bank NBE Regulat
 
 ---
 
+## [6.0.0-phase6-safe-bulk-operations-import-export-and-file-workflows] - 2026-09-30
+
+### Added
+- **Authoritative Bulk Operations Engine (`src/services/bulkOperationsEngine.ts`, `06_BULK_OPERATIONS_IMPORT_EXPORT.md`)**:
+  - Full transactional, auditable bulk management engine across Users, Departments, Reports, Submissions, and Special Access Grants.
+  - **Mandatory Workflow**: `Select/upload → parse → validate → detect conflicts → preview → explicit confirmation → transactional execution → audit → result report`.
+  - **Zero-Mutation Dry-Run Guarantee**: File uploads and parsing generate structured preview dry runs (`dryRunId`) with 15-minute TTL without mutating any underlying database or state.
+  - **Conflict Strategies**: Configurable resolution modes: `UPDATE` (merge/update existing), `SKIP` (preserve existing, create new only), and `FAIL_ON_CONFLICT` (strictly reject batches containing duplicate identifiers).
+  - **Deep Data Validation**: Required column checks, type validations, RFC 5322 email formatting, unique employee IDs and department short codes, valid organizational units, and batch-level duplicate detection.
+  - **Atomic Transaction & Snapshot Rollback**: Pre-execution snapshots captured prior to mutations. If any row encounters an error in `ATOMIC` mode, the entire batch automatically reverts to the pristine snapshot and seals a `BULK_OPERATION_ROLLBACK` event in the audit trail.
+  - **Partial Success Mode**: `PARTIAL` mode applies valid rows while recording exact row-level failures with actionable remediation notes.
+  - **Formula Injection (CSV Injection / CWE-1236) Protection**: Neutralizes dynamic formula/DDE execution payloads starting with `=`, `+`, `-`, `@`, `\t`, `\r` by automatically prefixing single quotes on exports and parsed inputs.
+  - **Oversized & Malicious File Protection**: Hard 5,000 row limits, payload sanitization, path traversal defense, and format enforcement (`CSV`, `JSON`, `XLSX`).
+  - **Zero-Bypass Authorization & Privilege Escalation Checks**: Non-admins (Makers, Checkers, Auditors) are strictly barred from performing user/department bulk administration (`HTTP 403`). Protection prevents unauthorized promotion to `ADMIN` and prevents demotion or deactivation of the primary compliance administrator (`usr_admin_1`).
+  - **Authorized Exports with Immutable Auditing**: Role- and department-filtered exports for Users, Departments, Reports, and Submissions in CSV, JSON, and XLSX formats with comprehensive audit logging.
+- **Enterprise Bulk Operations Modal (`src/components/BulkOperationsModal.tsx`)**:
+  - 4-step wizard interface: (1) Configure & Upload, (2) Validate & Preview with metric cards and paginated row-diff inspection, (3) Explicit Confirmation with legal/regulatory checkbox, and (4) Transactional Execution with full outcome breakdown.
+- **Admin Dashboard Integration (`src/components/AdminDashboard.tsx`)**:
+  - Multi-select row checkboxes with "Select All Visible" header checkbox.
+  - Floating Bulk Action Ribbon when users are selected: Activate, Deactivate (preserving historical reporting links), Reassign Department dialog, Assign Role dialog, Export Selected, and Clear Selection.
+  - Top action toolbar button: "Bulk Import & Ops" and direct export buttons.
+- **Department & Report Studio Integration (`src/components/DepartmentReportManagement.tsx`)**:
+  - Upgraded Bulk Import to the transactional `BulkOperationsModal`.
+- **Server REST API Endpoints (`server.ts`)**:
+  - `POST /api/bulk/dry-run`: Dry-run validation preview.
+  - `GET /api/bulk/dry-run/:dryRunId`: Retrieve cached dry-run with custom pagination.
+  - `POST /api/bulk/execute`: Explicit transactional execution with mode and confirmation.
+  - `POST /api/bulk/users/action`: Multi-select user actions (activate, deactivate, department, role, report assignment, special access).
+  - `POST /api/bulk/reports/action`: Bulk report actions (retirement, activation, department linkage).
+  - `POST /api/bulk/export`: Authorized and audited CSV/JSON/XLSX export.
+- **Comprehensive Automated Test Suite (`src/tests/phase6-bulk-operations.test.ts`)**:
+  - 12-section test coverage: formula injection, zero-mutation dry-run, explicit confirmation, conflict strategies (UPDATE, SKIP, FAIL), invalid data rejection, privilege escalation and root admin protection, atomic transaction rollback to pristine state, partial success mode, bulk multi-select user operations, report retirement preservation, authorized exports, and large dataset pagination (100% pass).
+
+---
+
 ## [5.0.0-phase5-user-department-report-role-relationship-engine] - 2026-09-30
 
 ### Added
