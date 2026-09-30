@@ -23,6 +23,8 @@ import {
   getDepartmentForReport,
 } from './src/data/organizationHierarchy.ts';
 import { paginateList, PaginatedResult } from './src/utils/paginationUtils.ts';
+import { configService } from './src/services/configService.ts';
+import { effectiveAccessEngine } from './src/services/effectiveAccessEngine.ts';
 
 dotenv.config();
 
@@ -78,6 +80,345 @@ function getAuthOrClientStatusCode(errMessage: string): number {
   }
   return 400;
 }
+
+// -------------------------------------------------------------
+// DYNAMIC CONFIGURATION & SSOT FOUNDATION API (PHASE 2)
+// -------------------------------------------------------------
+
+// System configuration summary, version hashes, entity counts
+app.get('/api/config/summary', (req, res) => {
+  res.json(configService.getConfigSummary());
+});
+
+// Real-Time Server-Sent Events (SSE) configuration update stream
+app.get('/api/config/events', (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  if (typeof (res as any).flushHeaders === 'function') {
+    (res as any).flushHeaders();
+  }
+
+  // Initial handshake
+  res.write(`event: handshake\ndata: ${JSON.stringify({ status: 'CONNECTED', timestamp: new Date().toISOString() })}\n\n`);
+
+  const onConfigChanged = (data: any) => {
+    res.write(`event: config_changed\ndata: ${JSON.stringify(data)}\n\n`);
+  };
+
+  const onCacheInvalidated = (data: any) => {
+    res.write(`event: cache_invalidated\ndata: ${JSON.stringify(data)}\n\n`);
+  };
+
+  configService.events.on('CONFIG_CHANGED', onConfigChanged);
+  configService.events.on('CACHE_INVALIDATED', onCacheInvalidated);
+
+  req.on('close', () => {
+    configService.events.off('CONFIG_CHANGED', onConfigChanged);
+    configService.events.off('CACHE_INVALIDATED', onCacheInvalidated);
+  });
+});
+
+// Explicit cache invalidation hook
+app.post('/api/config/cache/invalidate', (req, res) => {
+  const { domain } = req.body;
+  configService.invalidateCache(domain);
+  res.json({ success: true, message: `Cache invalidated for domain: ${domain || 'ALL'}`, summary: configService.getConfigSummary() });
+});
+
+// Department Hierarchy SSOT
+app.get('/api/config/departments', (req, res) => {
+  const flat = req.query.flat === 'true';
+  const activeOnly = req.query.activeOnly !== 'false';
+  const departments = configService.getDepartments({ flat, activeOnly });
+  res.json(departments);
+});
+
+app.get('/api/config/departments/:id', (req, res) => {
+  const dept = configService.getDepartmentById(req.params.id);
+  if (!dept) {
+    res.status(404).json({ error: 'Department not found' });
+    return;
+  }
+  const ancestors = configService.getDepartmentAncestors(req.params.id);
+  const descendants = configService.getDepartmentDescendants(req.params.id);
+  const assignments = configService.getDepartmentReportAssignments({ departmentId: req.params.id });
+  res.json({ ...dept, ancestors, descendants, assignments });
+});
+
+app.post('/api/config/departments', (req, res) => {
+  const actor = req.body.actor || { id: 'usr_admin', name: 'System Administrator', role: 'ADMIN' };
+  try {
+    const created = configService.createDepartment(req.body, actor);
+    res.status(201).json(created);
+  } catch (err: any) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.put('/api/config/departments/:id', (req, res) => {
+  const actor = req.body.actor || { id: 'usr_admin', name: 'System Administrator', role: 'ADMIN' };
+  try {
+    const updated = configService.updateDepartment(req.params.id, req.body, actor);
+    res.json(updated);
+  } catch (err: any) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Report Definitions & Metadata SSOT
+app.get('/api/config/reports', (req, res) => {
+  const { category, frequency, status, departmentId } = req.query as any;
+  const reports = configService.getReports({ category, frequency, status, departmentId });
+  res.json(reports);
+});
+
+app.get('/api/config/reports/:key', (req, res) => {
+  const report = configService.getReportDefinition(req.params.key);
+  if (!report) {
+    res.status(404).json({ error: `Report definition '${req.params.key}' not found` });
+    return;
+  }
+  res.json(report);
+});
+
+app.get('/api/config/reports/:key/versions', (req, res) => {
+  const versions = configService.getReportVersions(req.params.key);
+  res.json(versions);
+});
+
+app.get('/api/config/reports/:key/versions/:version', (req, res) => {
+  const vNum = parseInt(req.params.version, 10);
+  const version = configService.getReportVersion(req.params.key, vNum);
+  if (!version) {
+    res.status(404).json({ error: `Version ${vNum} of report '${req.params.key}' not found` });
+    return;
+  }
+  res.json(version);
+});
+
+// Create new report version without destroying historical submissions
+app.post('/api/config/reports/:key/versions', (req, res) => {
+  const actor = req.body.actor || { id: 'usr_admin', name: 'Compliance Administrator', role: 'ADMIN' };
+  if (!req.body.changelogSummary) {
+    res.status(400).json({ error: 'Changelog summary is mandatory when creating a new report version.' });
+    return;
+  }
+  try {
+    const newVersion = configService.createReportVersion(req.params.key, req.body, actor);
+    res.status(201).json(newVersion);
+  } catch (err: any) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Admin creates new report definition
+app.post('/api/config/reports', (req, res) => {
+  const actor = req.body.actor || { id: 'usr_admin', name: 'Compliance Administrator', role: 'ADMIN' };
+  if (!req.body.returnKey || !req.body.name) {
+    res.status(400).json({ error: 'ReturnKey and Name are required to create a report definition.' });
+    return;
+  }
+  try {
+    const result = configService.createReportDefinition(req.body, actor);
+    res.status(201).json(result);
+  } catch (err: any) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Admin updates report definition metadata
+app.put('/api/config/reports/:key', (req, res) => {
+  const actor = req.body.actor || { id: 'usr_admin', name: 'Compliance Administrator', role: 'ADMIN' };
+  try {
+    const updated = configService.updateReportDefinition(req.params.key, req.body, actor);
+    res.json(updated);
+  } catch (err: any) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Admin retires report definition
+app.post('/api/config/reports/:key/retire', (req, res) => {
+  const actor = req.body.actor || { id: 'usr_admin', name: 'Compliance Administrator', role: 'ADMIN' };
+  try {
+    const retired = configService.retireReport(req.params.key, actor, req.body.reason);
+    res.json(retired);
+  } catch (err: any) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Create draft version
+app.post('/api/config/reports/:key/versions/draft', (req, res) => {
+  const actor = req.body.actor || { id: 'usr_admin', name: 'Compliance Administrator', role: 'ADMIN' };
+  try {
+    const draft = configService.createDraftVersion(req.params.key, req.body, actor);
+    res.status(201).json(draft);
+  } catch (err: any) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Update draft version
+app.put('/api/config/reports/:key/versions/:version', (req, res) => {
+  const actor = req.body.actor || { id: 'usr_admin', name: 'Compliance Administrator', role: 'ADMIN' };
+  const vNum = parseInt(req.params.version, 10);
+  try {
+    const updated = configService.updateDraftVersion(req.params.key, vNum, req.body, actor);
+    res.json(updated);
+  } catch (err: any) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Validate version (structural consistency, cycle detection, unique field codes)
+app.post('/api/config/reports/:key/versions/:version/validate', (req, res) => {
+  const vNum = parseInt(req.params.version, 10);
+  try {
+    const result = configService.validateReportVersion(req.params.key, vNum);
+    res.json(result);
+  } catch (err: any) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Preview version
+app.get('/api/config/reports/:key/versions/:version/preview', (req, res) => {
+  const vNum = parseInt(req.params.version, 10);
+  try {
+    const preview = configService.previewReportVersion(req.params.key, vNum);
+    res.json(preview);
+  } catch (err: any) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Publish version
+app.post('/api/config/reports/:key/versions/:version/publish', (req, res) => {
+  const actor = req.body.actor || { id: 'usr_admin', name: 'Compliance Administrator', role: 'ADMIN' };
+  const vNum = parseInt(req.params.version, 10);
+  try {
+    const published = configService.publishReportVersion(req.params.key, vNum, actor, req.body.changelogSummary);
+    res.json(published);
+  } catch (err: any) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Dynamic Report Authorization Matrix for Current or Specified User
+app.get('/api/config/authorized-reports', (req, res) => {
+  const { userId, role, department } = req.query as any;
+  let userObj: any = null;
+
+  if (userId) {
+    userObj = userService.getById(userId);
+  }
+  if (!userObj) {
+    userObj = {
+      id: userId || 'anonymous',
+      role: role || 'MAKER',
+      department: department || 'Credit Operations',
+      specialAccessGrants: [],
+    };
+  }
+
+  const authMatrix = configService.getAuthorizedReportsForUser(userObj);
+  res.json(authMatrix);
+});
+
+// Explicit Relationship: Department ↔ Report
+app.get('/api/config/assignments/departments', (req, res) => {
+  const { departmentId, reportKey, activeOnly } = req.query as any;
+  const assignments = configService.getDepartmentReportAssignments({
+    departmentId,
+    reportKey,
+    activeOnly: activeOnly === 'true',
+  });
+  res.json(assignments);
+});
+
+app.post('/api/config/assignments/departments', (req, res) => {
+  const actor = req.body.actor || { id: 'usr_admin', name: 'Compliance Administrator', role: 'ADMIN' };
+  try {
+    const assigned = configService.assignDepartmentReport(req.body, actor);
+    res.status(201).json(assigned);
+  } catch (err: any) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.delete('/api/config/assignments/departments/:id', (req, res) => {
+  const actor = (req.body && req.body.actor) || { id: 'usr_admin', name: 'Compliance Administrator', role: 'ADMIN' };
+  const removed = configService.removeDepartmentReportAssignment(req.params.id, actor);
+  if (removed) {
+    res.json({ success: true, message: 'Assignment removed' });
+  } else {
+    res.status(404).json({ error: 'Assignment not found' });
+  }
+});
+
+// Explicit Relationship: User ↔ Report
+app.get('/api/config/assignments/users', (req, res) => {
+  const { userId, reportKey, duty } = req.query as any;
+  const assignments = configService.getUserReportAssignments({ userId, reportKey, duty });
+  res.json(assignments);
+});
+
+app.post('/api/config/assignments/users', (req, res) => {
+  const actor = req.body.actor || { id: 'usr_admin', name: 'Compliance Administrator', role: 'ADMIN' };
+  try {
+    const assigned = configService.assignUserReport(req.body, actor);
+    res.status(201).json(assigned);
+  } catch (err: any) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.delete('/api/config/assignments/users/:id', (req, res) => {
+  const actor = (req.body && req.body.actor) || { id: 'usr_admin', name: 'Compliance Administrator', role: 'ADMIN' };
+  const removed = configService.removeUserReportAssignment(req.params.id, actor);
+  if (removed) {
+    res.json({ success: true, message: 'User assignment removed' });
+  } else {
+    res.status(404).json({ error: 'Assignment not found' });
+  }
+});
+
+// Roles & Permissions SSOT
+app.get('/api/config/roles', (req, res) => {
+  res.json(configService.getRoles());
+});
+
+app.put('/api/config/roles/:code/permissions', (req, res) => {
+  const actor = req.body.actor || { id: 'usr_admin', name: 'Compliance Administrator', role: 'ADMIN' };
+  const { permissions } = req.body;
+  if (!Array.isArray(permissions)) {
+    res.status(400).json({ error: 'Permissions array required' });
+    return;
+  }
+  try {
+    const updated = configService.updateRolePermissions(req.params.code, permissions, actor);
+    res.json(updated);
+  } catch (err: any) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.get('/api/config/permissions', (req, res) => {
+  res.json(configService.getPermissions());
+});
+
+// Workflows SSOT
+app.get('/api/config/workflows', (req, res) => {
+  res.json(configService.getWorkflows());
+});
+
+// Configuration Change Audit Trail
+app.get('/api/config/changes', (req, res) => {
+  const limit = parseInt((req.query.limit as string) || '100', 10);
+  res.json(configService.getChangeLogs(limit));
+});
 
 // -------------------------------------------------------------
 // REGULATORY API ROUTES
@@ -455,32 +796,197 @@ app.get('/api/auth/biometrics/status/:email', (req, res) => {
 });
 
 app.get('/api/users', (req, res) => {
-  const users = userService.getAll();
-  const { page, page_size, limit } = req.query as any;
+  const { search, role, status, department, sortBy, sortOrder, page, page_size, limit } = req.query as any;
+  const filtered = userService.getFilteredUsers({ search, role, status, department, sortBy, sortOrder });
   if (page !== undefined || page_size !== undefined) {
-    res.json(paginateList(users, page, page_size || limit));
+    res.json(paginateList(filtered, page, page_size || limit));
     return;
   }
-  res.json(users);
+  res.json(filtered);
+});
+
+// Single user details
+app.get('/api/users/:id', (req, res) => {
+  const user = userService.getById(req.params.id);
+  if (!user) {
+    res.status(404).json({ error: 'User not found' });
+    return;
+  }
+  const { password, ...safe } = user;
+  res.json(safe);
+});
+
+// Check if user can be deleted safely
+app.get('/api/users/:id/can-delete', (req, res) => {
+  const check = userService.canDeleteUser(req.params.id);
+  res.json(check);
+});
+
+// Get user specific audit trail
+app.get('/api/users/:id/audit', (req, res) => {
+  const history = userService.getUserAuditHistory(req.params.id);
+  const { page, page_size, limit } = req.query as any;
+  if (page !== undefined || page_size !== undefined) {
+    res.json(paginateList(history, page, page_size || limit));
+    return;
+  }
+  res.json(history);
+});
+
+// Get dynamically resolved authorized reports for user
+app.get('/api/users/:id/authorized-reports', (req, res) => {
+  const user = userService.getById(req.params.id);
+  if (!user) {
+    res.status(404).json({ error: 'User not found' });
+    return;
+  }
+  const authMatrix = configService.getAuthorizedReportsForUser(user);
+  res.json(authMatrix);
+});
+
+// -------------------------------------------------------------
+// AUTHORITATIVE RELATIONSHIP & EFFECTIVE ACCESS ENGINE API (PHASE 5)
+// -------------------------------------------------------------
+
+// Authoritative access evaluation endpoint
+app.post('/api/access/evaluate', (req, res) => {
+  const { user, userId, reportKey, action, submissionId } = req.body;
+  const resolvedUser = user || (userId ? userService.getById(userId) : null) || DEMO_USERS[0];
+  const submission = submissionId ? submissionService.getById(submissionId) : req.body.submission || null;
+
+  if (!action) {
+    res.status(400).json({ allowed: false, reason: 'Action parameter is required.', code: 'INVALID_PARAMETER' });
+    return;
+  }
+
+  const result = effectiveAccessEngine.evaluateAccess(resolvedUser, reportKey, action, submission);
+  const httpStatus = result.allowed ? 200 : getAuthOrClientStatusCode(result.reason);
+  res.status(httpStatus).json(result);
+});
+
+// Comprehensive Effective Permissions Matrix across all 24 returns
+app.get('/api/access/matrix/:userId', (req, res) => {
+  const user = userService.getById(req.params.userId) || DEMO_USERS.find((u) => u.id === req.params.userId);
+  if (!user) {
+    res.status(404).json({ error: `User not found: ${req.params.userId}` });
+    return;
+  }
+  const matrix = effectiveAccessEngine.getEffectiveReportPermissionsMatrix(user);
+  res.json({
+    userId: user.id,
+    userName: user.name,
+    role: user.role,
+    department: user.department,
+    status: (user as any).status || 'ACTIVE',
+    matrix,
+  });
+});
+
+// Direct User-Report Assignments Management
+app.get('/api/access/user-assignments/:userId', (req, res) => {
+  const assignments = effectiveAccessEngine.getUserDirectReportAssignments(req.params.userId);
+  res.json({ userId: req.params.userId, reportKeys: assignments });
+});
+
+app.post('/api/access/user-assignments', (req, res) => {
+  const caller = req.body.user || (req.headers['x-user-role'] ? { role: req.headers['x-user-role'], name: req.headers['x-user-name'] } : null);
+  if (caller && caller.role !== 'ADMIN') {
+    res.status(403).json({ error: 'Only ADMIN role can assign reports directly to users.' });
+    return;
+  }
+  const { userId, reportKey, adminName } = req.body;
+  if (!userId || !reportKey) {
+    res.status(400).json({ error: 'userId and reportKey are required.' });
+    return;
+  }
+  const resolvedAdmin = adminName || caller?.name || 'Compliance Administrator';
+  effectiveAccessEngine.assignReportToUser(userId, reportKey, resolvedAdmin);
+  res.status(201).json({
+    success: true,
+    message: `Report ${reportKey} directly assigned to user ${userId}.`,
+    reportKeys: effectiveAccessEngine.getUserDirectReportAssignments(userId),
+  });
+});
+
+app.delete('/api/access/user-assignments', (req, res) => {
+  const caller = req.body?.user || (req.headers['x-user-role'] ? { role: req.headers['x-user-role'], name: req.headers['x-user-name'] } : null);
+  if (caller && caller.role !== 'ADMIN') {
+    res.status(403).json({ error: 'Only ADMIN role can remove direct report assignments.' });
+    return;
+  }
+  const userId = req.body?.userId || (req.query as any)?.userId;
+  const reportKey = req.body?.reportKey || (req.query as any)?.reportKey;
+  const adminName = req.body?.adminName || caller?.name || 'Compliance Administrator';
+
+  if (!userId || !reportKey) {
+    res.status(400).json({ error: 'userId and reportKey are required.' });
+    return;
+  }
+  const removed = effectiveAccessEngine.removeReportFromUser(userId, reportKey, adminName);
+  res.json({
+    success: removed,
+    message: removed ? `Report ${reportKey} unassigned from user ${userId}.` : 'Assignment not found.',
+    reportKeys: effectiveAccessEngine.getUserDirectReportAssignments(userId),
+  });
+});
+
+// Cache Invalidation Hook
+app.post('/api/access/cache/invalidate', (req, res) => {
+  const { userId, reason } = req.body;
+  if (userId) {
+    effectiveAccessEngine.invalidateUser(userId);
+  } else {
+    effectiveAccessEngine.invalidateAll(reason || 'Administrative manual cache purge');
+  }
+  res.json({ success: true, message: 'Authorization evaluation cache purged.' });
+});
+
+// Admin creates user account directly
+app.post('/api/users', (req, res) => {
+  const caller = req.body.user || (req.headers['x-user-role'] ? { role: req.headers['x-user-role'], name: req.headers['x-user-name'] } : null);
+  if (caller && caller.role !== 'ADMIN') {
+    res.status(403).json({ error: 'Only ADMIN role can create new user accounts.' });
+    return;
+  }
+  const adminName = req.body.adminName || caller?.name || 'Compliance Administrator';
+  const result = userService.createUser(req.body, adminName);
+  if (result.success && result.user) {
+    auditService.log({
+      actorId: caller?.id || 'usr_admin',
+      actorName: adminName,
+      actorRole: 'ADMIN',
+      action: 'USER_CREATED',
+      entityType: 'USER',
+      entityId: result.user.id,
+      correlationId: `corr_usr_create_${result.user.id}`,
+      details: `Administrator created user account for ${result.user.name} (${result.user.email}) with role ${result.user.role} in department ${result.user.department}.`,
+      newState: result.user,
+    });
+    res.status(201).json(result);
+  } else {
+    res.status(400).json(result);
+  }
 });
 
 app.post('/api/users/:id/status', (req, res) => {
-  const { status, adminName, user } = req.body;
-  if (user && user.role !== 'ADMIN') {
+  const caller = req.body.user || (req.headers['x-user-role'] ? { role: req.headers['x-user-role'], name: req.headers['x-user-name'] } : null);
+  if (caller && caller.role !== 'ADMIN') {
     res.status(403).json({ error: 'Only ADMIN role can update user authorization status.' });
     return;
   }
-  const result = userService.updateUserStatus(req.params.id, status, adminName || 'System Administrator');
+  const { status, adminName } = req.body;
+  const resolvedAdmin = adminName || caller?.name || 'System Administrator';
+  const result = userService.updateUserStatus(req.params.id, status, resolvedAdmin);
   if (result.success && result.user) {
     auditService.log({
-      actorId: 'usr_admin',
-      actorName: adminName || 'Administrator',
+      actorId: caller?.id || 'usr_admin',
+      actorName: resolvedAdmin,
       actorRole: 'ADMIN',
       action: `USER_STATUS_${status}`,
       entityType: 'USER',
       entityId: req.params.id,
       correlationId: `corr_status_${Date.now()}`,
-      details: `User ${result.user.name} (${result.user.email}) status updated to ${status}`,
+      details: `User ${result.user.name} (${result.user.email}) status updated to ${status} by ${resolvedAdmin}.`,
     });
     res.json(result);
   } else {
@@ -489,13 +995,25 @@ app.post('/api/users/:id/status', (req, res) => {
 });
 
 app.put('/api/users/:id', (req, res) => {
-  const { user } = req.body;
-  if (user && user.role !== 'ADMIN') {
+  const caller = req.body.user || (req.headers['x-user-role'] ? { role: req.headers['x-user-role'], name: req.headers['x-user-name'] } : null);
+  if (caller && caller.role !== 'ADMIN') {
     res.status(403).json({ error: 'Only ADMIN role can modify user account details.' });
     return;
   }
+  const adminName = req.body.adminName || caller?.name || 'System Administrator';
   const result = userService.updateUser(req.params.id, req.body);
-  if (result.success) {
+  if (result.success && result.user) {
+    auditService.log({
+      actorId: caller?.id || 'usr_admin',
+      actorName: adminName,
+      actorRole: 'ADMIN',
+      action: 'USER_UPDATED',
+      entityType: 'USER',
+      entityId: req.params.id,
+      correlationId: `corr_usr_upd_${Date.now()}`,
+      details: `User account details updated for ${result.user.name} (${result.user.email}) [Role: ${result.user.role}, Dept: ${result.user.department}].`,
+      newState: result.user,
+    });
     res.json(result);
   } else {
     res.status(400).json(result);
@@ -503,15 +1021,28 @@ app.put('/api/users/:id', (req, res) => {
 });
 
 app.delete('/api/users/:id', (req, res) => {
-  const user = (req.body && req.body.user) || (req.query && (req.query as any).user);
-  if (user && user.role !== 'ADMIN') {
+  const caller = req.body?.user || (req.query as any)?.user || (req.headers['x-user-role'] ? { role: req.headers['x-user-role'], name: req.headers['x-user-name'] } : null);
+  if (caller && caller.role !== 'ADMIN') {
     res.status(403).json({ error: 'Only ADMIN role can delete user accounts.' });
     return;
   }
+  const targetUser = userService.getById(req.params.id);
   const result = userService.deleteUser(req.params.id);
   if (result.success) {
+    auditService.log({
+      actorId: caller?.id || 'usr_admin',
+      actorName: caller?.name || 'Compliance Administrator',
+      actorRole: 'ADMIN',
+      action: 'USER_DELETED',
+      entityType: 'USER',
+      entityId: req.params.id,
+      correlationId: `corr_usr_del_${Date.now()}`,
+      details: `User account ${targetUser?.name || req.params.id} permanently removed.`,
+      oldState: targetUser,
+    });
     res.json(result);
   } else {
+    // If blocked due to historical safety, return 400 with detailed reason
     res.status(400).json(result);
   }
 });
@@ -522,13 +1053,193 @@ app.delete('/api/users/:id', (req, res) => {
 
 // Get official Oromia Bank departments & report classifications
 app.get('/api/departments', (req, res) => {
-  const depts = departmentService.getAll();
-  const { page, page_size, limit } = req.query as any;
+  let depts = departmentService.getAll();
+  const { search, division, status, page, page_size, limit } = req.query as any;
+
+  if (division && division !== 'ALL') {
+    depts = depts.filter((d) => d.division === division);
+  }
+  if (status && status !== 'ALL') {
+    depts = depts.filter((d) => (d.status || 'ACTIVE') === status);
+  }
+  if (search && search.trim()) {
+    const q = search.toLowerCase().trim();
+    depts = depts.filter(
+      (d) =>
+        d.name.toLowerCase().includes(q) ||
+        d.shortCode.toLowerCase().includes(q) ||
+        d.division.toLowerCase().includes(q) ||
+        d.description.toLowerCase().includes(q) ||
+        d.reportKeys.some((k) => k.toLowerCase().includes(q))
+    );
+  }
+
   if (page !== undefined || page_size !== undefined) {
     res.json(paginateList(depts, page, page_size || limit));
     return;
   }
   res.json(depts);
+});
+
+// Single department details
+app.get('/api/departments/:id', (req, res) => {
+  const dept = departmentService.getById(req.params.id) || departmentService.getByName(req.params.id);
+  if (!dept) {
+    res.status(404).json({ error: 'Department not found' });
+    return;
+  }
+  const configDept = configService.getDepartmentById(dept.id);
+  const ancestors = configDept ? configService.getDepartmentAncestors(dept.id) : [];
+  const descendants = configDept ? configService.getDepartmentDescendants(dept.id) : [];
+  const assignedUsers = userService.getAll().filter(
+    (u) => u.department && (u.department.toLowerCase() === dept.name.toLowerCase() || u.department === dept.id)
+  );
+  const submissionsCount = submissionService.getAll().filter(
+    (s) => s.department && (s.department.toLowerCase() === dept.name.toLowerCase() || (s as any).departmentId === dept.id)
+  ).length;
+
+  res.json({
+    ...dept,
+    ancestors,
+    descendants,
+    usersCount: assignedUsers.length,
+    makersCount: assignedUsers.filter((u) => u.role === 'MAKER').length,
+    checkersCount: assignedUsers.filter((u) => u.role === 'CHECKER').length,
+    submissionsCount,
+    assignedUsers: assignedUsers.map(({ password, ...safe }) => safe),
+  });
+});
+
+// Check if department can be deleted safely
+app.get('/api/departments/:id/can-delete', (req, res) => {
+  const check = departmentService.canDeleteDepartment(req.params.id);
+  res.json(check);
+});
+
+// Get department specific audit history
+app.get('/api/departments/:id/audit', (req, res) => {
+  const logs = configService.getDepartmentAuditHistory(req.params.id);
+  const { page, page_size, limit } = req.query as any;
+  if (page !== undefined || page_size !== undefined) {
+    res.json(paginateList(logs, page, page_size || limit));
+    return;
+  }
+  res.json(logs);
+});
+
+// Admin creates department
+app.post('/api/departments', (req, res) => {
+  const caller = req.body.user || (req.headers['x-user-role'] ? { role: req.headers['x-user-role'], name: req.headers['x-user-name'] } : null);
+  if (caller && caller.role !== 'ADMIN') {
+    res.status(403).json({ error: 'Only ADMIN role can create departments.' });
+    return;
+  }
+  const adminName = req.body.adminName || caller?.name || 'Compliance Administrator';
+  const result = departmentService.addDepartment(req.body, adminName);
+  if (result.success && result.department) {
+    // Also sync with configService SSOT
+    try {
+      configService.createDepartment(
+        {
+          id: result.department.id,
+          name: result.department.name,
+          shortCode: result.department.shortCode,
+          division: result.department.division,
+          description: result.department.description,
+          parentId: req.body.parentId || null,
+          primaryResponsibilities: result.department.primaryResponsibilities,
+          status: (req.body.status as any) || 'ACTIVE',
+          effectiveFrom: req.body.effectiveFrom,
+        },
+        { id: caller?.id || 'usr_admin', name: adminName, role: 'ADMIN' }
+      );
+    } catch {
+      // Already handled or ID exists
+    }
+    res.status(201).json(result);
+  } else {
+    res.status(400).json(result);
+  }
+});
+
+// Admin updates department
+app.put('/api/departments/:id', (req, res) => {
+  const caller = req.body.user || (req.headers['x-user-role'] ? { role: req.headers['x-user-role'], name: req.headers['x-user-name'] } : null);
+  if (caller && caller.role !== 'ADMIN') {
+    res.status(403).json({ error: 'Only ADMIN role can update departments.' });
+    return;
+  }
+  const adminName = req.body.adminName || caller?.name || 'Compliance Administrator';
+  const result = departmentService.updateDepartment(req.params.id, req.body, adminName);
+  if (result.success && result.department) {
+    try {
+      configService.updateDepartment(
+        req.params.id,
+        {
+          name: result.department.name,
+          shortCode: result.department.shortCode,
+          division: result.department.division,
+          description: result.department.description,
+          parentId: req.body.parentId,
+          status: req.body.status,
+          primaryResponsibilities: result.department.primaryResponsibilities,
+          effectiveTo: req.body.effectiveTo,
+        },
+        { id: caller?.id || 'usr_admin', name: adminName, role: 'ADMIN' }
+      );
+    } catch {}
+    res.json(result);
+  } else {
+    res.status(400).json(result);
+  }
+});
+
+// Admin updates department lifecycle status
+app.post('/api/departments/:id/status', (req, res) => {
+  const caller = req.body.user || (req.headers['x-user-role'] ? { role: req.headers['x-user-role'], name: req.headers['x-user-name'] } : null);
+  if (caller && caller.role !== 'ADMIN') {
+    res.status(403).json({ error: 'Only ADMIN role can change department status.' });
+    return;
+  }
+  const adminName = req.body.adminName || caller?.name || 'Compliance Administrator';
+  const { status, effectiveTo } = req.body;
+  const result = departmentService.setDepartmentStatus(req.params.id, status, adminName, effectiveTo);
+  if (result.success) {
+    try {
+      configService.setDepartmentStatus(
+        req.params.id,
+        status,
+        { id: caller?.id || 'usr_admin', name: adminName, role: 'ADMIN' },
+        effectiveTo
+      );
+    } catch {}
+    res.json(result);
+  } else {
+    res.status(400).json(result);
+  }
+});
+
+// Admin deletes department (enforces historical safety)
+app.delete('/api/departments/:id', (req, res) => {
+  const caller = req.body?.user || (req.query as any)?.user || (req.headers['x-user-role'] ? { role: req.headers['x-user-role'], name: req.headers['x-user-name'] } : null);
+  if (caller && caller.role !== 'ADMIN') {
+    res.status(403).json({ error: 'Only ADMIN role can delete departments.' });
+    return;
+  }
+  const adminName = req.body?.adminName || caller?.name || 'Compliance Administrator';
+  const result = departmentService.removeDepartment(req.params.id, req.body?.fallbackDepartment, adminName);
+  if (result.success) {
+    try {
+      configService.deleteDepartment(req.params.id, {
+        id: caller?.id || 'usr_admin',
+        name: adminName,
+        role: 'ADMIN',
+      });
+    } catch {}
+    res.json(result);
+  } else {
+    res.status(400).json(result);
+  }
 });
 
 // Grant special cross-department access to a Maker or Checker
