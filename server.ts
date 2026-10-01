@@ -888,7 +888,27 @@ app.post('/api/auth/reset-password', (req, res) => {
   }
 });
 
-// PHASE 10: Biometric Architecture & Security Endpoints
+// PHASE 10 - 14: Biometric Architecture, Security, Privacy & Compliance Endpoints
+
+// Biometric Request ID & Security Boundary Middleware
+app.use('/api/auth/biometrics', (req, res, next) => {
+  const reqId = (req.headers['x-request-id'] as string) || `req_bio_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+  res.setHeader('X-Request-ID', reqId);
+  res.setHeader('X-Biometric-TLS-Expectation', 'TLS_1_3_STRICT');
+  next();
+});
+
+// 0. Biometric Service Boundary Health Check
+app.get('/api/auth/biometrics/health', (_req, res) => {
+  const health = biometricService.getServiceHealth();
+  res.json(health);
+});
+
+// 0b. User-Facing Privacy & Statutory Compliance Disclosure
+app.get('/api/auth/biometrics/privacy-disclosure', (_req, res) => {
+  const disclosure = biometricService.getPrivacyDisclosure();
+  res.json({ success: true, disclosure });
+});
 
 // 1. Issue fresh cryptographic challenge (nonce)
 app.post('/api/auth/biometrics/challenge', (req, res) => {
@@ -1011,13 +1031,37 @@ app.post('/api/auth/biometrics/face/verify', (req, res) => {
 
 // 8. Authoritative User Biometric Lifecycle State
 app.get('/api/auth/biometrics/lifecycle/:email', (req, res) => {
-  const state = biometricService.getBiometricUserState(req.params.email);
+  const targetEmail = req.params.email.toLowerCase().trim();
+  const actorEmail = ((req.headers['x-actor-email'] as string) || (req.query.actorEmail as string) || '').toLowerCase().trim();
+
+  // Cross-user visibility restriction to prevent account enumeration / reconnaissance
+  if (actorEmail && actorEmail !== targetEmail) {
+    const actor = userService.getByEmail(actorEmail);
+    if (!actor || (actor.role !== 'ADMIN' && actor.role !== 'AUDITOR')) {
+      res.status(403).json({ success: false, message: 'Security violation: Unauthorized access to officer lifecycle state.' });
+      return;
+    }
+  }
+
+  const state = biometricService.getBiometricUserState(targetEmail);
   res.json(state);
 });
 
 // 8b. Comprehensive Biometric Security Center & Device Metadata (Safe, Non-invertible)
 app.get('/api/auth/biometrics/security-center/:email', (req, res) => {
-  const details = biometricService.getSecurityCenterDetails(req.params.email);
+  const targetEmail = req.params.email.toLowerCase().trim();
+  const actorEmail = ((req.headers['x-actor-email'] as string) || (req.query.actorEmail as string) || '').toLowerCase().trim();
+
+  // Cross-user visibility restriction to prevent unauthorized reconnaissance
+  if (actorEmail && actorEmail !== targetEmail) {
+    const actor = userService.getByEmail(actorEmail);
+    if (!actor || (actor.role !== 'ADMIN' && actor.role !== 'AUDITOR')) {
+      res.status(403).json({ success: false, message: 'Security violation: Unauthorized access to officer security center details.' });
+      return;
+    }
+  }
+
+  const details = biometricService.getSecurityCenterDetails(targetEmail);
   if (!details) {
     res.status(404).json({ success: false, message: 'Officer account not found.' });
     return;
@@ -1157,6 +1201,35 @@ app.post('/api/auth/biometrics/unlock', (req, res) => {
     res.json(result);
   } else {
     res.status(401).json(result);
+  }
+});
+
+// 14a. Enforce Retention & Purge Expired Biometric Data
+app.post('/api/auth/biometrics/retention/purge', (req, res) => {
+  const { actorEmail } = req.body;
+  if (actorEmail) {
+    const actor = userService.getByEmail(actorEmail.toLowerCase().trim());
+    if (!actor || actor.role !== 'ADMIN') {
+      res.status(403).json({ success: false, message: 'Security violation: Administrator privilege required to purge biometric data.' });
+      return;
+    }
+  }
+  const result = biometricService.enforceRetentionRules();
+  res.json({ success: true, ...result });
+});
+
+// 14b. Export Sanitized Compliance Archive for NBE Audits
+app.post('/api/auth/biometrics/compliance/export', (req, res) => {
+  const { requesterEmail, targetEmail } = req.body;
+  if (!requesterEmail) {
+    res.status(400).json({ success: false, message: 'requesterEmail required.' });
+    return;
+  }
+  try {
+    const archive = biometricService.exportComplianceArchive(requesterEmail, targetEmail);
+    res.json({ success: true, archive });
+  } catch (err: any) {
+    res.status(403).json({ success: false, message: err.message });
   }
 });
 

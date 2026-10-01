@@ -651,24 +651,11 @@ class UserServiceClass {
         faceHash.includes('invalid') ||
         faceHash === 'REJECT';
 
-      if (isMismatchTest) {
+      if (isMismatchTest || matched.faceHash !== faceHash) {
         return {
           success: false,
           message: 'Facial signature does not match enrolled biometric template. Please look directly at the camera.',
         };
-      }
-
-      if (matched.faceHash !== faceHash) {
-        // If hashes differ due to natural live optical camera exposure/framing variations,
-        // verify that both are valid authenticated facial signatures
-        const isValidEnrolled = matched.faceHash.startsWith('face_sig_') || matched.faceHash.startsWith('face_hash_');
-        const isValidSample = faceHash.startsWith('face_sig_') || faceHash.startsWith('face_hash_');
-        if (!isValidEnrolled || !isValidSample) {
-          return {
-            success: false,
-            message: 'Facial signature does not match enrolled biometric template. Please look directly at the camera.',
-          };
-        }
       }
     }
 

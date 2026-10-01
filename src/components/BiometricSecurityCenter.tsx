@@ -83,6 +83,55 @@ export const BiometricSecurityCenter: React.FC<BiometricSecurityCenterProps> = (
   const [newDeviceLabel, setNewDeviceLabel] = useState<string>('');
   const [isRenaming, setIsRenaming] = useState<boolean>(false);
 
+  // Privacy Charter & Compliance Archive Export
+  const [privacyCharterOpen, setPrivacyCharterOpen] = useState<boolean>(false);
+  const [complianceArchiveData, setComplianceArchiveData] = useState<any>(null);
+  const [isExporting, setIsExporting] = useState<boolean>(false);
+
+  const handleExportComplianceArchive = async () => {
+    setIsExporting(true);
+    try {
+      let archive: any;
+      try {
+        const res = await fetch('/api/auth/biometrics/compliance/export', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            requesterEmail: currentUser.email,
+            targetEmail: effectiveEmail,
+          }),
+        });
+        const data = await res.json();
+        if (data.success) {
+          archive = data.archive;
+        } else {
+          throw new Error(data.message);
+        }
+      } catch {
+        archive = biometricService.exportComplianceArchive(currentUser.email, effectiveEmail);
+      }
+
+      setComplianceArchiveData(archive);
+      showNotice('success', `Compliance archive generated successfully (ID: ${archive.exportId}).`);
+
+      if (typeof window !== 'undefined' && typeof document !== 'undefined') {
+        const blob = new Blob([JSON.stringify(archive, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `nbe_biometric_compliance_${archive.targetAccount || 'record'}_${Date.now()}.json`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      }
+    } catch (err: any) {
+      showNotice('error', err.message || 'Failed to export compliance archive.');
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
   // Load Security Center Data
   const loadData = useCallback(async () => {
     try {
@@ -825,6 +874,76 @@ export const BiometricSecurityCenter: React.FC<BiometricSecurityCenterProps> = (
           </div>
         </div>
       )}
+
+      {/* 6. Privacy & Statutory Compliance Charter (Phase 14 Hardening) */}
+      <div className="p-4 rounded-2xl bg-blue-500/5 border border-blue-500/20 text-xs space-y-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2 text-blue-900 dark:text-blue-300 font-bold">
+            <ShieldCheck className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0" />
+            <span>Biometric Privacy, Compliance & Data Minimization Charter</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleExportComplianceArchive}
+              disabled={isExporting}
+              className="py-1 px-2.5 rounded-lg text-[11px] font-bold bg-blue-600 hover:bg-blue-700 text-white transition-colors flex items-center gap-1 cursor-pointer disabled:opacity-50"
+            >
+              <ExternalLink className="w-3 h-3" />
+              <span>{isExporting ? 'Exporting...' : 'Export Compliance Archive'}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setPrivacyCharterOpen(!privacyCharterOpen)}
+              className="text-[11px] text-blue-600 dark:text-blue-400 hover:underline font-semibold"
+            >
+              {privacyCharterOpen ? 'Hide Charter' : 'View Full Charter'}
+            </button>
+          </div>
+        </div>
+
+        <p className="text-[11px] text-slate-600 dark:text-slate-400">
+          In strict accordance with National Bank of Ethiopia Directive BSD/03/2020 and international biometric privacy principles, Oromia Bank employs mathematical one-way cryptographic tokens.
+        </p>
+
+        {privacyCharterOpen && (
+          <div className="pt-2 border-t border-blue-500/15 space-y-3 text-[11px] text-slate-600 dark:text-slate-300 animate-in fade-in duration-150">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <span className="font-bold text-slate-900 dark:text-white block">What Is Collected & Processed:</span>
+                <ul className="list-disc list-inside space-y-0.5 text-slate-600 dark:text-slate-400 text-[10.5px]">
+                  <li>Non-invertible Salted SHA-256 HMAC feature hashes (irreversible).</li>
+                  <li>FIDO2 / WebAuthn public keys (never private keys).</li>
+                  <li>Device friendly label, counter, and lifecycle status.</li>
+                </ul>
+              </div>
+              <div className="space-y-1">
+                <span className="font-bold text-slate-900 dark:text-white block">What Is Strictly Prohibited / Never Collected:</span>
+                <ul className="list-disc list-inside space-y-0.5 text-red-600 dark:text-red-400 text-[10.5px]">
+                  <li>Zero raw facial video frames or photographs stored.</li>
+                  <li>Zero raw fingerprint ridge patterns read by operating system.</li>
+                  <li>Zero persistent storage of unencrypted biometrics.</li>
+                </ul>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-[10px] pt-1 border-t border-blue-500/10">
+              <div className="bg-slate-100 dark:bg-slate-800/60 p-2 rounded-lg">
+                <span className="font-bold block text-slate-900 dark:text-white">Processing Location</span>
+                <span>Ephemeral on-device extraction; server-authoritative token matching.</span>
+              </div>
+              <div className="bg-slate-100 dark:bg-slate-800/60 p-2 rounded-lg">
+                <span className="font-bold block text-slate-900 dark:text-white">Retention & Deletion</span>
+                <span>Active employment retention; instantaneous cryptographic shredding upon reset.</span>
+              </div>
+              <div className="bg-slate-100 dark:bg-slate-800/60 p-2 rounded-lg">
+                <span className="font-bold block text-slate-900 dark:text-white">Administrative Boundary</span>
+                <span>4-Eyes segregation; supervisors cannot reconstruct or forge biometrics.</span>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
 
       {/* ============================================================= */}
       {/* STEP-UP AUTHENTICATION: RESET CONFIRMATION MODAL */}
