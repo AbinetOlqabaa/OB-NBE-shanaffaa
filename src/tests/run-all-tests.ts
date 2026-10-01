@@ -358,6 +358,7 @@ import { runPhase11BiometricRegistrationEnrollmentTests } from './phase11-biomet
 import { runPhase12BiometricSignInAuthenticationTests } from './phase12-biometric-signin-authentication.test.ts';
 import { runPhase13BiometricResetRecoveryDevicesTests } from './phase13-biometric-reset-recovery-devices.test.ts';
 import { runPhase14BiometricHardeningPrivacyComplianceTests } from './phase14-biometric-hardening-privacy-compliance.test.ts';
+import { runPhase15BiometricE2EHardwareValidationAcceptanceTests } from './phase15-biometric-e2e-hardware-validation-acceptance.test.ts';
 
 async function runFullApplicationTestSuite() {
   runRegulatoryCoreTests();
@@ -372,6 +373,7 @@ async function runFullApplicationTestSuite() {
   await runPhase12BiometricSignInAuthenticationTests();
   await runPhase13BiometricResetRecoveryDevicesTests();
   await runPhase14BiometricHardeningPrivacyComplianceTests();
+  await runPhase15BiometricE2EHardwareValidationAcceptanceTests();
   await runPdfAndSnapshotTests();
   await runIndexedDbOfflineStorageTests();
   await runResponsiveUiAndLayoutTests();

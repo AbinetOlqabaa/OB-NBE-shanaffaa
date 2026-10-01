@@ -525,11 +525,22 @@ export function useBiometricAuth() {
             ? 'Camera access was denied by user or system permission settings. Please allow browser camera access to use Face ID.'
             : err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError'
             ? 'No webcam or camera device was found on this hardware.'
+            : err.name === 'NotReadableError' || err.name === 'TrackStartError'
+            ? 'Device camera is currently busy or in use by another application. Please close other camera apps and retry.'
+            : err.name === 'AbortError'
+            ? 'Camera initialization was dismissed or cancelled by user.'
+            : err.name === 'OverconstrainedError'
+            ? 'Camera constraints could not be satisfied by device hardware.'
             : err.message || 'Unable to access device camera.';
 
         setCameraStatus({
           available: false,
-          label: 'Camera Permission Denied',
+          label:
+            err.name === 'NotReadableError' || err.name === 'TrackStartError'
+              ? 'Camera Busy / In Use'
+              : err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError'
+              ? 'No Camera Found'
+              : 'Camera Permission Denied',
           reason: errorMsg,
         });
 
