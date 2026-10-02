@@ -4,6 +4,49 @@ All notable changes and engineering enhancements for the Oromia Bank NBE Regulat
 
 ---
 
+## [25.0.0-phase25-library-core-architecture-and-maker-library] - 2026-10-02
+
+### Added & Enhanced
+- **Phase 25: Library Core Architecture & Maker Library (`MakerLibraryView.tsx`, `submissionService.ts`, `regulatory.ts`, `server.ts`, `Sidebar.tsx`, `MakerWorkspace.tsx`, `BottomNavigation.tsx`, `MobileBottomNav.tsx`, `CommandPaletteModal.tsx`, `KeyboardShortcutsModal.tsx`, `phase25-library-core-architecture-maker-library.test.ts`)**:
+  - **First-Class "Library" Sidebar Feature & Hotkey (`Ctrl+L` / `Cmd+L`)**:
+    - Introduced a primary `LIBRARY` navigation view and sidebar entry with `BookOpen` icon, accessible to Makers, Checkers, Auditors, and Admins.
+    - Integrated into Sidebar, Command Palette, Keyboard Shortcuts cheat sheet, and mobile thumb-navigation bars.
+  - **Authoritative Single-Source-of-Truth Architecture (Requirement 1)**:
+    - Library queries live records from `submissionService` and historical snapshots (`SubmissionSnapshot`), eliminating disconnected duplicate databases.
+    - Any changes (create, edit, save, submit, return, reuse, delete) synchronize across the entire application instantly.
+  - **5 Canonical Lifecycle States (Requirement 2)**:
+    - Built `deriveLibraryLifecycleState()` supporting:
+      1. `DRAFT`: Newly created unedited return draft (v1).
+      2. `IN_PROGRESS`: Return draft with active revisions saved (v2+).
+      3. `RETURNED`: Return sent back by Checker for corrections (`CORRECTION_REQUIRED`).
+      4. `SUBMITTED`: Return sealed and submitted to review (`PENDING_CHECKER`), approved, or delivered to NBE (`SENT`).
+      5. `REUSED_COPY`: Unsubmitted return created from a prior submitted filing (`reusedFromSubmissionId` preserved).
+  - **Maker Save, Reopen, Edit, Validate & Submit Lifecycle (Requirement 3)**:
+    - Makers can save unfinished drafts, leave, reopen from Library, continue editing, trigger authoritative rule validation (`validateSubmission`), and submit to Checker queue with preparation notes.
+  - **Submitted Report "Reuse as New" Lifecycle (Requirement 4)**:
+    - Submitted returns are permanently sealed and cannot be edited in place.
+    - "Reuse as New" creates a brand-new report identity (new unique ID, v1, status `DRAFT`), copying verified data structures while preserving `reusedFromSubmissionId` and `reusedFromVersion`.
+    - Original source report remains 100% immutable (unmodified hash, values, and status).
+  - **Strict Deletion Permissions & Protections (Requirements 5, 6, 9)**:
+    - Makers can delete unsubmitted drafts only (`DRAFT`, `CORRECTION_REQUIRED`).
+    - Submitted reports (`PENDING_CHECKER`, `APPROVED`, `SENT`) strictly forbid deletion at both UI and backend API level, returning HTTP 403 Forbidden.
+    - Every deletion requires an explicit confirmation dialog with Cancel/Delete before removal.
+    - Cross-maker and cross-department deletion protection prevents unauthorized draft purging.
+  - **Server-Side Permission Filtering & Query Engine (Requirements 7, 10)**:
+    - REST endpoint `GET /api/regulatory/library` with server-side authorization: Makers only see authorized returns matching their home department, M:N linked departments, and active special access grants.
+    - Comprehensive filtering: keyword search, lifecycle state, raw status, category/report type, reporting frequency, date ranges (`startDate`, `endDate`), and multi-field sorting.
+    - Server-side pagination returning `{ items, total, page, pageSize, totalPages, stats }`.
+  - **Responsive Dual-Mode UI (Cards & Table) (Requirement 8)**:
+    - Grid Cards view with interactive lifecycle pills, version chips, department badges, and quick actions.
+    - Compact Table view for data-dense inspection.
+    - Real-time loading skeleton, empty state with filter reset, error state, and 403 permission-denied banners.
+  - **Persistence & Rehydration (Requirement 11)**:
+    - Library data persists to IndexedDB and rehydrates seamlessly upon page refresh, login/logout, or browser restart.
+  - **Automated Acceptance Test Coverage (Requirement 13)**:
+    - 100% pass across all 7 test sections and 35+ assertions in `phase25-library-core-architecture-maker-library.test.ts`.
+
+---
+
 ## [24.0.0-phase24-validation-error-warning-remediation-assistant] - 2026-10-02
 
 ### Added & Enhanced

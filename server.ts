@@ -85,6 +85,8 @@ function getAuthOrClientStatusCode(errMessage: string): number {
     m.includes('only the maker') ||
     m.includes('only auditor') ||
     m.includes('review denied') ||
+    m.includes('forbidden') ||
+    m.includes('cannot delete') ||
     m.includes('denied')
   ) {
     return 403;
@@ -623,6 +625,74 @@ app.get('/api/regulatory/submissions', (req, res) => {
     return;
   }
   res.json(submissions);
+});
+
+// Phase 25: Authoritative Library Query Endpoint (Requirements 1, 2, 7, 10)
+app.get('/api/regulatory/library', (req, res) => {
+  const {
+    search,
+    lifecycleState,
+    status,
+    reportType,
+    frequency,
+    startDate,
+    endDate,
+    sortBy,
+    sortOrder,
+    page,
+    pageSize,
+    limit,
+    userId,
+    userEmail,
+  } = req.query as any;
+
+  // Resolve requesting user session
+  let activeUser = DEMO_USERS[0];
+  if (userEmail) {
+    const found = userService.getByEmail(userEmail);
+    if (found) activeUser = found as any;
+  } else if (userId) {
+    const found = userService.getById(userId);
+    if (found) activeUser = found as any;
+  }
+
+  const result = submissionService.queryLibrary(activeUser, {
+    search,
+    lifecycleState,
+    status,
+    reportType,
+    frequency,
+    startDate,
+    endDate,
+    sortBy,
+    sortOrder,
+    page: page ? Number(page) : undefined,
+    pageSize: pageSize || limit ? Number(pageSize || limit) : undefined,
+  });
+
+  res.json(result);
+});
+
+// Delete Draft Submission Endpoint (Requirements 5, 6, 9, 10)
+app.delete('/api/regulatory/submissions/:id', (req, res) => {
+  const { user } = req.body || {};
+  const queryUser = req.query.userEmail
+    ? userService.getByEmail(req.query.userEmail as string)
+    : req.query.userId
+    ? userService.getById(req.query.userId as string)
+    : null;
+  const activeUser = user || queryUser || DEMO_USERS[0];
+
+  try {
+    const deleted = submissionService.deleteSubmission(req.params.id, activeUser);
+    if (deleted) {
+      res.json({ success: true, message: 'Draft deleted successfully' });
+    } else {
+      res.status(404).json({ error: 'Submission not found' });
+    }
+  } catch (err: any) {
+    res.status(getAuthOrClientStatusCode(err.message)).json({ error: err.message });
+  }
 });
 
 // Get submission by ID

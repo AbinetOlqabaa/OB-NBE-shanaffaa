@@ -13,6 +13,13 @@ import type {
   DynamicAreaDefinition,
   DynamicColumnDefinition,
   SubmissionSnapshot,
+  LibraryFilterOptions,
+  LibraryQueryResult,
+  LibraryLifecycleState,
+} from '../types/regulatory.ts';
+import {
+  deriveLibraryLifecycleState,
+  isFinalSubmittedStatus,
 } from '../types/regulatory.ts';
 import { getReportByKey } from '../data/report-registry.ts';
 import { getDepartmentForReport } from '../data/organizationHierarchy.ts';
@@ -1643,10 +1650,26 @@ class SubmissionServiceClass {
 
   public deleteSubmission(id: string, user: UserSession): boolean {
     const sub = this.submissions.get(id);
-    if (!sub) return false;
+    if (!sub) {
+      throw new Error(`Submission not found: ${id}`);
+    }
 
-    if (sub.status !== 'DRAFT' && sub.status !== 'CORRECTION_REQUIRED' && sub.status !== 'FAILED' && user.role !== 'ADMIN') {
-      throw new Error(`Cannot delete submission in ${sub.status} state. Only drafts can be deleted.`);
+    // Evaluate effective access engine rules
+    const evalResult = effectiveAccessEngine.evaluateAccess(user, sub.reportKey, 'DELETE_DRAFT', sub);
+    if (!evalResult.allowed) {
+      throw new Error(`Forbidden: ${evalResult.reason}`);
+    }
+
+    // Absolute prohibition: Submitted records must never be deleted under any circumstances
+    const isSubmitted =
+      isFinalSubmittedStatus(sub.status) ||
+      sub.status === 'PENDING_CHECKER' ||
+      sub.status === 'APPROVED' ||
+      sub.status === 'SENT';
+    if (isSubmitted) {
+      throw new Error(
+        `Cannot delete submission in ${sub.status} state. Under NBE Directive BSD/03/2020, submitted reports are permanent immutable records.`
+      );
     }
 
     this.submissions.delete(id);
@@ -1660,9 +1683,202 @@ class SubmissionServiceClass {
       entityType: 'REPORT_SUBMISSION',
       entityId: id,
       correlationId: 'corr_' + id,
-      details: `${user.role} ${user.name} deleted draft ${sub.reportKey}`,
+      details: `${user.role} ${user.name} deleted draft ${sub.reportKey} (v${sub.version})`,
     });
     return true;
+  }
+
+  /**
+   * Authoritative Library Query Engine (Requirement 1, 2, 7, 10)
+   * Enforces backend server-side permission filtering across ownership, departments,
+   * report types, and special access grants.
+   */
+  public queryLibrary(user: UserSession, options: LibraryFilterOptions = {}): LibraryQueryResult {
+    const {
+      search = '',
+      lifecycleState = 'ALL',
+      status = 'ALL',
+      reportType,
+      frequency,
+      startDate,
+      endDate,
+      sortBy = 'updatedAt',
+      sortOrder = 'desc',
+      page = 1,
+      pageSize = 10,
+    } = options;
+
+    // 1. Authoritative Backend Access Control (Requirement 10)
+    // Never fetch all records and hide unauthorized records only in the frontend.
+    const all = this.getAll();
+    let authorized: ReportSubmission[] = [];
+
+    if (user.role === 'ADMIN' || user.role === 'AUDITOR') {
+      // Oversight roles have visibility across all institutional records
+      authorized = all;
+    } else if (user.role === 'MAKER') {
+      // Maker ONLY sees records within their authorized scope:
+      // Allowed report types (home dept + M:N linked + special access)
+      const allowedKeys = new Set(userService.getAllowedReportKeysForUser(user));
+      const userDept = (user.department || '').toLowerCase();
+
+      authorized = all.filter((s) => {
+        // Must be an authorized report type
+        if (!allowedKeys.has(s.reportKey)) return false;
+        // Must either be owned by the user, or belong to user's department, or covered by special access
+        const isOwner = s.makerId === user.id;
+        const isDept = s.department && s.department.toLowerCase() === userDept;
+        const hasSpecial = user.specialAccessGrants?.some(
+          (g) =>
+            g.reportKey === s.reportKey ||
+            (g.department && g.department.toLowerCase() === s.department?.toLowerCase())
+        );
+        return isOwner || isDept || hasSpecial;
+      });
+    } else if (user.role === 'CHECKER') {
+      const userDept = (user.department || '').toLowerCase();
+      authorized = all.filter((s) => {
+        return (s.department && s.department.toLowerCase() === userDept) || user.role === 'ADMIN';
+      });
+    } else {
+      authorized = [];
+    }
+
+    // 2. Compute authoritative stats on ALL authorized records before narrowing by search/filters
+    const stats = {
+      all: authorized.length,
+      draft: 0,
+      inProgress: 0,
+      returned: 0,
+      submitted: 0,
+      reusedCopy: 0,
+    };
+
+    for (const sub of authorized) {
+      const lState = deriveLibraryLifecycleState(sub);
+      if (lState === 'DRAFT') stats.draft++;
+      else if (lState === 'IN_PROGRESS') stats.inProgress++;
+      else if (lState === 'RETURNED') stats.returned++;
+      else if (lState === 'SUBMITTED') stats.submitted++;
+      else if (lState === 'REUSED_COPY') stats.reusedCopy++;
+    }
+
+    // 3. Filter by search query
+    let filtered = authorized;
+    const q = search.trim().toLowerCase();
+    if (q) {
+      filtered = filtered.filter((s) => {
+        const report = getReportByKey(s.reportKey);
+        const title = report?.Title?.toLowerCase() || '';
+        const desc = report?.Description?.toLowerCase() || '';
+        const cat = report?.Category?.toLowerCase() || '';
+        const rKey = s.reportKey.toLowerCase();
+        const maker = (s.makerName || '').toLowerCase();
+        const nbeRef = (s.nbeReferenceNumber || '').toLowerCase();
+        const dept = (s.department || '').toLowerCase();
+
+        return (
+          rKey.includes(q) ||
+          title.includes(q) ||
+          desc.includes(q) ||
+          cat.includes(q) ||
+          maker.includes(q) ||
+          nbeRef.includes(q) ||
+          dept.includes(q)
+        );
+      });
+    }
+
+    // 4. Filter by lifecycle state
+    if (lifecycleState && lifecycleState !== 'ALL') {
+      filtered = filtered.filter((s) => deriveLibraryLifecycleState(s) === lifecycleState);
+    }
+
+    // 5. Filter by raw status
+    if (status && status !== 'ALL') {
+      filtered = filtered.filter((s) => s.status === status);
+    }
+
+    // 6. Filter by reportType / category
+    if (reportType && reportType !== 'ALL') {
+      filtered = filtered.filter((s) => {
+        if (s.reportKey === reportType) return true;
+        const report = getReportByKey(s.reportKey);
+        return report?.Category === reportType || report?.department === reportType;
+      });
+    }
+
+    // 7. Filter by frequency
+    if (frequency && frequency !== 'ALL') {
+      filtered = filtered.filter((s) => {
+        const report = getReportByKey(s.reportKey);
+        return report?.Frequency === frequency;
+      });
+    }
+
+    // 8. Filter by date range
+    if (startDate) {
+      const startMs = new Date(startDate).getTime();
+      filtered = filtered.filter((s) => new Date(s.updatedAt || s.createdAt).getTime() >= startMs);
+    }
+    if (endDate) {
+      const endMs = new Date(endDate).getTime() + 86400000; // inclusive of whole day
+      filtered = filtered.filter((s) => new Date(s.updatedAt || s.createdAt).getTime() <= endMs);
+    }
+
+    // 9. Sorting
+    filtered.sort((a, b) => {
+      let valA: any;
+      let valB: any;
+      switch (sortBy) {
+        case 'createdAt':
+          valA = new Date(a.createdAt).getTime();
+          valB = new Date(b.createdAt).getTime();
+          break;
+        case 'reportKey':
+          valA = a.reportKey;
+          valB = b.reportKey;
+          break;
+        case 'title':
+          valA = getReportByKey(a.reportKey)?.Title || a.reportKey;
+          valB = getReportByKey(b.reportKey)?.Title || b.reportKey;
+          break;
+        case 'status':
+          valA = a.status;
+          valB = b.status;
+          break;
+        case 'version':
+          valA = a.version;
+          valB = b.version;
+          break;
+        case 'updatedAt':
+        default:
+          valA = new Date(a.updatedAt || a.createdAt).getTime();
+          valB = new Date(b.updatedAt || b.createdAt).getTime();
+          break;
+      }
+
+      if (valA < valB) return sortOrder === 'asc' ? -1 : 1;
+      if (valA > valB) return sortOrder === 'asc' ? 1 : -1;
+      return 0;
+    });
+
+    // 10. Server-side Pagination
+    const total = filtered.length;
+    const p = Math.max(1, Number(page) || 1);
+    const sz = Math.max(1, Number(pageSize) || 10);
+    const totalPages = Math.max(1, Math.ceil(total / sz));
+    const startIdx = (p - 1) * sz;
+    const items = filtered.slice(startIdx, startIdx + sz);
+
+    return {
+      items,
+      total,
+      page: p,
+      pageSize: sz,
+      totalPages,
+      stats,
+    };
   }
 
   /**
