@@ -30,6 +30,7 @@ import { bulkOperationsEngine } from './src/services/bulkOperationsEngine.ts';
 import { realtimeSsotEngine } from './src/services/realtimeSsotEngine.ts';
 import { configurationGovernanceService } from './src/services/configurationGovernanceService.ts';
 import { biometricService } from './src/services/biometricService.ts';
+import { ValidationRemediationService } from './src/services/validationRemediationService.ts';
 
 dotenv.config();
 
@@ -47,6 +48,7 @@ app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, Idempotency-Key, X-Correlation-ID');
+  res.header('Permissions-Policy', 'camera=*, microphone=()');
   if (req.method === 'OPTIONS') {
     res.sendStatus(200);
     return;
@@ -62,6 +64,13 @@ export type { PaginatedResult };
 
 function getAuthOrClientStatusCode(errMessage: string): number {
   const m = (errMessage || '').toLowerCase();
+  if (
+    m.includes('concurrent_modification_conflict') ||
+    m.includes('concurrency') ||
+    m.includes('conflict')
+  ) {
+    return 409;
+  }
   if (
     m.includes('role violation') ||
     m.includes('department restriction') ||
@@ -644,17 +653,35 @@ app.post('/api/regulatory/submissions', (req, res) => {
 
 // Update draft values & dynamic rows
 app.put('/api/regulatory/submissions/:id', (req, res) => {
-  const { values, dynamicRows, user } = req.body;
+  const { values, dynamicRows, user, expectedVersion } = req.body;
   const activeUser = user || DEMO_USERS[0];
   try {
-    const updated = submissionService.updateDraft(req.params.id, values || {}, dynamicRows || {}, activeUser);
+    const updated = submissionService.updateDraft(
+      req.params.id,
+      values || {},
+      dynamicRows || {},
+      activeUser,
+      expectedVersion !== undefined ? Number(expectedVersion) : undefined
+    );
     res.json(updated);
   } catch (err: any) {
     res.status(getAuthOrClientStatusCode(err.message)).json({ error: err.message });
   }
 });
 
-// Validate submission
+// Reuse historical/submitted report as new draft
+app.post('/api/regulatory/submissions/:id/reuse', (req, res) => {
+  const { user } = req.body;
+  const activeUser = user || DEMO_USERS[0];
+  try {
+    const reused = submissionService.reuseSubmission(req.params.id, activeUser);
+    res.status(201).json(reused);
+  } catch (err: any) {
+    res.status(getAuthOrClientStatusCode(err.message)).json({ error: err.message });
+  }
+});
+
+// Validate submission (authoritative summary)
 app.post('/api/regulatory/submissions/:id/validate', (req, res) => {
   try {
     const summary = submissionService.validateSubmission(req.params.id);
@@ -664,12 +691,67 @@ app.post('/api/regulatory/submissions/:id/validate', (req, res) => {
   }
 });
 
-// Maker submit to Checker
-app.post('/api/regulatory/submissions/:id/submit', (req, res) => {
-  const { user, comment } = req.body;
+// Phase 24: Authoritative Normalized Validation & Remediation Assistant Inspection
+app.get('/api/regulatory/submissions/:id/remediation', (req, res) => {
+  try {
+    const normalizedSummary = submissionService.validateSubmissionNormalized(req.params.id);
+    res.json(normalizedSummary);
+  } catch (err: any) {
+    res.status(getAuthOrClientStatusCode(err.message)).json({ error: err.message });
+  }
+});
+
+// Phase 24: Authoritative Remediation Auto-Fix Execution
+app.post('/api/regulatory/submissions/:id/remediation/apply', (req, res) => {
+  const { proposedFix, user, expectedVersion } = req.body;
   const activeUser = user || DEMO_USERS[0];
   try {
-    const updated = submissionService.submitToChecker(req.params.id, activeUser, comment);
+    if (!proposedFix) {
+      res.status(400).json({ error: 'Missing proposedFix payload' });
+      return;
+    }
+    const result = submissionService.remediateSubmission(
+      req.params.id,
+      proposedFix,
+      activeUser,
+      expectedVersion !== undefined ? Number(expectedVersion) : undefined
+    );
+    res.json(result);
+  } catch (err: any) {
+    res.status(getAuthOrClientStatusCode(err.message)).json({ error: err.message });
+  }
+});
+
+// Phase 24: Authoritative Real-Time Payload Validation without Persisting
+app.post('/api/regulatory/validate-payload', (req, res) => {
+  const { metadata, values, dynamicRows } = req.body;
+  try {
+    if (!metadata) {
+      res.status(400).json({ error: 'Missing report metadata' });
+      return;
+    }
+    const summary = ValidationRemediationService.normalizeReportValidation(
+      metadata,
+      values || {},
+      dynamicRows || {}
+    );
+    res.json(summary);
+  } catch (err: any) {
+    res.status(getAuthOrClientStatusCode(err.message)).json({ error: err.message });
+  }
+});
+
+// Maker submit to Checker
+app.post('/api/regulatory/submissions/:id/submit', (req, res) => {
+  const { user, comment, expectedVersion } = req.body;
+  const activeUser = user || DEMO_USERS[0];
+  try {
+    const updated = submissionService.submitToChecker(
+      req.params.id,
+      activeUser,
+      comment,
+      expectedVersion !== undefined ? Number(expectedVersion) : undefined
+    );
     res.json(updated);
   } catch (err: any) {
     res.status(getAuthOrClientStatusCode(err.message)).json({ error: err.message });
@@ -1129,6 +1211,21 @@ app.post('/api/auth/biometrics/device/rename', (req, res) => {
   }
 });
 
+// 10b. Verify Credentials and Prior Enrollment for Reset
+app.post('/api/auth/biometrics/reset/verify', (req, res) => {
+  const { email, password } = req.body;
+  if (!email || !password) {
+    res.status(400).json({ success: false, message: 'Corporate email and password are required.' });
+    return;
+  }
+  const result = biometricService.verifyResetCredentialsAndEnrollment(email, password);
+  if (result.success) {
+    res.json(result);
+  } else {
+    res.status(result.validCredentials ? 422 : 401).json(result);
+  }
+});
+
 // 11. Request Step-up Authenticated Reset
 app.post('/api/auth/biometrics/reset/request', (req, res) => {
   const { email, type, password, reason, actorEmail } = req.body;
@@ -1186,6 +1283,26 @@ app.post('/api/auth/biometrics/admin/unlock', (req, res) => {
     res.json(result);
   } else {
     res.status(400).json(result);
+  }
+});
+
+// 12d. Biometric Matching Threshold & Optical Governance Settings (Phase 17)
+app.get('/api/auth/biometrics/settings', (req, res) => {
+  const settings = biometricService.getBiometricSettings();
+  res.json({ success: true, settings });
+});
+
+app.post('/api/auth/biometrics/settings', (req, res) => {
+  const { adminEmail, settings } = req.body;
+  if (!adminEmail || !settings) {
+    res.status(400).json({ success: false, message: 'adminEmail and settings payload required.' });
+    return;
+  }
+  const result = biometricService.updateBiometricSettings(settings, adminEmail);
+  if (result.success) {
+    res.json(result);
+  } else {
+    res.status(403).json(result);
   }
 });
 
@@ -2386,6 +2503,9 @@ function ensureDjangoSimulatorRunning() {
           detached: true,
           stdio: 'ignore',
           cwd: __dirname,
+        });
+        proc.on('error', (err) => {
+          console.warn('[NBE Simulator Service] Python microservice auto-spawn unavailable (using built-in simulator engine):', err.message);
         });
         proc.unref();
       } catch (e: any) {
