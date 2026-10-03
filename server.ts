@@ -6,6 +6,7 @@
 import express from 'express';
 import http from 'http';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { spawn } from 'child_process';
 import dotenv from 'dotenv';
@@ -31,6 +32,9 @@ import { realtimeSsotEngine } from './src/services/realtimeSsotEngine.ts';
 import { configurationGovernanceService } from './src/services/configurationGovernanceService.ts';
 import { biometricService } from './src/services/biometricService.ts';
 import { ValidationRemediationService } from './src/services/validationRemediationService.ts';
+import { sessionService } from './src/services/sessionService.ts';
+import { nbeReportPackageService } from './src/services/nbeReportPackageNormalizer.ts';
+import { nbeEndpointRegistry } from './src/services/nbeEndpointRegistry.ts';
 
 dotenv.config();
 
@@ -87,6 +91,8 @@ function getAuthOrClientStatusCode(errMessage: string): number {
     m.includes('review denied') ||
     m.includes('forbidden') ||
     m.includes('cannot delete') ||
+    m.includes('report_definition_immutable') ||
+    m.includes('immutable') ||
     m.includes('denied')
   ) {
     return 403;
@@ -230,7 +236,7 @@ app.post('/api/config/reports/:key/versions', (req, res) => {
     const newVersion = configService.createReportVersion(req.params.key, req.body, actor);
     res.status(201).json(newVersion);
   } catch (err: any) {
-    res.status(400).json({ error: err.message });
+    res.status(getAuthOrClientStatusCode(err.message)).json({ error: err.message });
   }
 });
 
@@ -245,7 +251,7 @@ app.post('/api/config/reports', (req, res) => {
     const result = configService.createReportDefinition(req.body, actor);
     res.status(201).json(result);
   } catch (err: any) {
-    res.status(400).json({ error: err.message });
+    res.status(getAuthOrClientStatusCode(err.message)).json({ error: err.message });
   }
 });
 
@@ -256,7 +262,7 @@ app.put('/api/config/reports/:key', (req, res) => {
     const updated = configService.updateReportDefinition(req.params.key, req.body, actor);
     res.json(updated);
   } catch (err: any) {
-    res.status(400).json({ error: err.message });
+    res.status(getAuthOrClientStatusCode(err.message)).json({ error: err.message });
   }
 });
 
@@ -267,7 +273,7 @@ app.post('/api/config/reports/:key/retire', (req, res) => {
     const retired = configService.retireReport(req.params.key, actor, req.body.reason);
     res.json(retired);
   } catch (err: any) {
-    res.status(400).json({ error: err.message });
+    res.status(getAuthOrClientStatusCode(err.message)).json({ error: err.message });
   }
 });
 
@@ -278,7 +284,7 @@ app.post('/api/config/reports/:key/versions/draft', (req, res) => {
     const draft = configService.createDraftVersion(req.params.key, req.body, actor);
     res.status(201).json(draft);
   } catch (err: any) {
-    res.status(400).json({ error: err.message });
+    res.status(getAuthOrClientStatusCode(err.message)).json({ error: err.message });
   }
 });
 
@@ -290,7 +296,7 @@ app.put('/api/config/reports/:key/versions/:version', (req, res) => {
     const updated = configService.updateDraftVersion(req.params.key, vNum, req.body, actor);
     res.json(updated);
   } catch (err: any) {
-    res.status(400).json({ error: err.message });
+    res.status(getAuthOrClientStatusCode(err.message)).json({ error: err.message });
   }
 });
 
@@ -301,7 +307,7 @@ app.post('/api/config/reports/:key/versions/:version/validate', (req, res) => {
     const result = configService.validateReportVersion(req.params.key, vNum);
     res.json(result);
   } catch (err: any) {
-    res.status(400).json({ error: err.message });
+    res.status(getAuthOrClientStatusCode(err.message)).json({ error: err.message });
   }
 });
 
@@ -312,7 +318,7 @@ app.get('/api/config/reports/:key/versions/:version/preview', (req, res) => {
     const preview = configService.previewReportVersion(req.params.key, vNum);
     res.json(preview);
   } catch (err: any) {
-    res.status(400).json({ error: err.message });
+    res.status(getAuthOrClientStatusCode(err.message)).json({ error: err.message });
   }
 });
 
@@ -324,7 +330,121 @@ app.post('/api/config/reports/:key/versions/:version/publish', (req, res) => {
     const published = configService.publishReportVersion(req.params.key, vNum, actor, req.body.changelogSummary);
     res.json(published);
   } catch (err: any) {
+    res.status(getAuthOrClientStatusCode(err.message)).json({ error: err.message });
+  }
+});
+
+// ============================================================================
+// NBE JSON REPORT PACKAGE IMPORT & SCHEMA NORMALIZATION (Phase 31)
+// ============================================================================
+
+// Validate NBE report JSON package without mutating configuration
+app.post('/api/config/nbe-package/validate', (req, res) => {
+  try {
+    const payload = req.body.package !== undefined ? req.body.package : req.body;
+    const result = nbeReportPackageService.validatePackage(payload);
+    res.json(result);
+  } catch (err: any) {
     res.status(400).json({ error: err.message });
+  }
+});
+
+// Admin imports NBE report JSON package and creates governed DRAFT configuration
+app.post('/api/config/nbe-package/import', (req, res) => {
+  const actor = req.body.actor || { id: 'usr_admin', name: 'Compliance Administrator', role: 'ADMIN' };
+  if (!actor || actor.role !== 'ADMIN') {
+    res.status(403).json({
+      error: 'Forbidden: Administrator role is strictly required to import NBE report JSON packages.',
+      code: 'UNAUTHORIZED_ACCESS',
+    });
+    return;
+  }
+
+  try {
+    const payload = req.body.package !== undefined ? req.body.package : req.body;
+    const imported = nbeReportPackageService.importPackageAsDraft(payload, actor);
+    res.status(201).json(imported);
+  } catch (err: any) {
+    const statusCode = err.message?.includes('Unauthorized') ? 403 : 400;
+    res.status(statusCode).json({ error: err.message });
+  }
+});
+
+// List all auditable imported source artifacts
+app.get('/api/config/nbe-package/artifacts', (req, res) => {
+  try {
+    const artifacts = nbeReportPackageService.getAllArtifacts();
+    res.json(artifacts);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Retrieve specific imported source artifact by hash
+app.get('/api/config/nbe-package/artifacts/:hash', (req, res) => {
+  try {
+    const artifact = nbeReportPackageService.getArtifactByHash(req.params.hash);
+    if (!artifact) {
+      res.status(404).json({ error: `NBE package artifact with hash '${req.params.hash}' not found.` });
+      return;
+    }
+    res.json(artifact);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================================================
+// DYNAMIC NBE API ENDPOINT REGISTRY (Phase 32)
+// ============================================================================
+
+// List all configured report endpoints
+app.get('/api/config/nbe-endpoints', (req, res) => {
+  try {
+    const activeOnly = req.query.activeOnly === 'true';
+    const endpoints = nbeEndpointRegistry.getAllEndpoints({ activeOnly });
+    res.json(endpoints);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Get endpoint configuration for a specific report
+app.get('/api/config/nbe-endpoints/:key', (req, res) => {
+  try {
+    const endpoint = nbeEndpointRegistry.getEndpointForReport(req.params.key);
+    res.json(endpoint);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Admin updates endpoint configuration for a report
+app.put('/api/config/nbe-endpoints/:key', (req, res) => {
+  const actor = req.body.actor || { id: 'usr_admin', name: 'Compliance Administrator', role: 'ADMIN' };
+  if (!actor || actor.role !== 'ADMIN') {
+    res.status(403).json({
+      error: 'Forbidden: Administrator role is required to modify NBE API integration endpoint.',
+      code: 'UNAUTHORIZED_ACCESS',
+    });
+    return;
+  }
+
+  try {
+    const updated = nbeEndpointRegistry.updateReportEndpoint(req.params.key, req.body.integration || req.body, actor);
+    res.json(updated);
+  } catch (err: any) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// List managed authentication profile references (zero secret material exposed)
+app.get('/api/config/nbe-auth-profiles', (req, res) => {
+  try {
+    const profiles = nbeEndpointRegistry.getAuthProfiles();
+    res.json(profiles);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
   }
 });
 
@@ -695,14 +815,167 @@ app.delete('/api/regulatory/submissions/:id', (req, res) => {
   }
 });
 
-// Get submission by ID
+// Get submission by ID (with authoritative cross-department isolation)
 app.get('/api/regulatory/submissions/:id', (req, res) => {
-  const sub = submissionService.getById(req.params.id);
-  if (!sub) {
-    res.status(404).json({ error: 'Submission not found' });
+  const { userEmail, userId } = req.query as any;
+  let activeUser = req.body && req.body.user ? req.body.user : null;
+  if (!activeUser) {
+    if (userEmail) activeUser = userService.getByEmail(userEmail as string);
+    else if (userId) activeUser = userService.getById(userId as string);
+  }
+  if (!activeUser) activeUser = DEMO_USERS[0];
+
+  try {
+    const sub = submissionService.getAuthorizedSubmission(req.params.id, activeUser);
+    res.json(sub);
+  } catch (err: any) {
+    const status = err.message.includes('not found') ? 404 : 403;
+    res.status(status).json({ error: err.message });
+  }
+});
+
+// Phase 26: Removal Impact Assessment for Admin (Requirement 8)
+app.get('/api/regulatory/submissions/:id/removal-impact', (req, res) => {
+  const { userEmail, userId } = req.query as any;
+  let activeUser = req.body && req.body.user ? req.body.user : null;
+  if (!activeUser) {
+    if (userEmail) activeUser = userService.getByEmail(userEmail as string);
+    else if (userId) activeUser = userService.getById(userId as string);
+  }
+  if (!activeUser) activeUser = DEMO_USERS[0];
+
+  try {
+    const assessment = submissionService.getRemovalImpactAssessment(req.params.id, activeUser);
+    res.json(assessment);
+  } catch (err: any) {
+    const status = err.message.includes('not found')
+      ? 404
+      : getAuthOrClientStatusCode(err.message);
+    res.status(status).json({ error: err.message });
+  }
+});
+
+// Phase 26: Admin Governed Removal / Archiving / Voiding (Requirements 7 & 8)
+app.post('/api/regulatory/submissions/:id/admin-remove', (req, res) => {
+  const { action, reason, confirmed, user } = req.body || {};
+  const queryUser = req.query.userEmail
+    ? userService.getByEmail(req.query.userEmail as string)
+    : req.query.userId
+    ? userService.getById(req.query.userId as string)
+    : null;
+  const activeUser = user || queryUser || DEMO_USERS[0];
+
+  try {
+    const result = submissionService.adminGovernedRemoveSubmission(req.params.id, activeUser, {
+      action,
+      reason,
+      confirmed: Boolean(confirmed),
+    });
+    res.json(result);
+  } catch (err: any) {
+    const status = err.message.includes('not found')
+      ? 404
+      : getAuthOrClientStatusCode(err.message);
+    res.status(status).json({ error: err.message });
+  }
+});
+
+// Phase 26: Flag Submission for Review (Requirement 1)
+app.post('/api/regulatory/submissions/:id/flag', (req, res) => {
+  const { reason, flag, user } = req.body || {};
+  const queryUser = req.query.userEmail
+    ? userService.getByEmail(req.query.userEmail as string)
+    : req.query.userId
+    ? userService.getById(req.query.userId as string)
+    : null;
+  const activeUser = user || queryUser || DEMO_USERS[0];
+
+  try {
+    const updated = submissionService.flagSubmission(
+      req.params.id,
+      activeUser,
+      reason || 'Flagged for compliance review',
+      flag !== undefined ? Boolean(flag) : true
+    );
+    res.json(updated);
+  } catch (err: any) {
+    const status = err.message.includes('not found')
+      ? 404
+      : getAuthOrClientStatusCode(err.message);
+    res.status(status).json({ error: err.message });
+  }
+});
+
+// Phase 26: Add Review/Audit Comment (Requirements 1 & 2)
+app.post('/api/regulatory/submissions/:id/comment', (req, res) => {
+  const { text, category, user } = req.body || {};
+  const queryUser = req.query.userEmail
+    ? userService.getByEmail(req.query.userEmail as string)
+    : req.query.userId
+    ? userService.getById(req.query.userId as string)
+    : null;
+  const activeUser = user || queryUser || DEMO_USERS[0];
+
+  if (!text || !text.trim()) {
+    res.status(400).json({ error: 'Comment text is required.' });
     return;
   }
-  res.json(sub);
+
+  try {
+    const updated = submissionService.addSubmissionComment(
+      req.params.id,
+      activeUser,
+      text.trim(),
+      category || 'GENERAL'
+    );
+    res.json(updated);
+  } catch (err: any) {
+    const status = err.message.includes('not found')
+      ? 404
+      : getAuthOrClientStatusCode(err.message);
+    res.status(status).json({ error: err.message });
+  }
+});
+
+// Phase 33: Reset Draft to Template Defaults (Requirement 10)
+app.post('/api/regulatory/submissions/:id/reset-defaults', (req, res) => {
+  const { user } = req.body || {};
+  const queryUser = req.query.userEmail
+    ? userService.getByEmail(req.query.userEmail as string)
+    : req.query.userId
+    ? userService.getById(req.query.userId as string)
+    : null;
+  const activeUser = user || queryUser || DEMO_USERS[0];
+
+  try {
+    const updated = submissionService.resetToTemplateDefaults(req.params.id, activeUser);
+    res.json(updated);
+  } catch (err: any) {
+    const status = err.message.includes('not found')
+      ? 404
+      : getAuthOrClientStatusCode(err.message);
+    res.status(status).json({ error: err.message });
+  }
+});
+
+// Phase 26: Dossier Audit Events Inspection (Requirement 2)
+app.get('/api/regulatory/submissions/:id/audit-events', (req, res) => {
+  const { userEmail, userId } = req.query as any;
+  let activeUser = req.body && req.body.user ? req.body.user : null;
+  if (!activeUser) {
+    if (userEmail) activeUser = userService.getByEmail(userEmail as string);
+    else if (userId) activeUser = userService.getById(userId as string);
+  }
+  if (!activeUser) activeUser = DEMO_USERS[0];
+
+  try {
+    submissionService.getAuthorizedSubmission(req.params.id, activeUser);
+    const events = auditService.query({ entityId: req.params.id });
+    res.json({ events });
+  } catch (err: any) {
+    const status = err.message.includes('not found') ? 404 : 403;
+    res.status(status).json({ error: err.message });
+  }
 });
 
 // Create new report draft
@@ -725,6 +998,40 @@ app.post('/api/regulatory/submissions', (req, res) => {
 app.put('/api/regulatory/submissions/:id', (req, res) => {
   const { values, dynamicRows, user, expectedVersion } = req.body;
   const activeUser = user || DEMO_USERS[0];
+
+  // Phase 34: Maker Template Governance & Immutability Enforcement
+  // Maker enters and edits report values only. Maker cannot change report title,
+  // subtitle, section title, row title, column title, field code, formula definition,
+  // NBE mapping, API endpoint or validation rule.
+  const forbiddenDefinitionKeys = [
+    'title',
+    'name',
+    'subtitle',
+    'templateSnapshot',
+    'reportKey',
+    'formulas',
+    'validationRules',
+    'nbeMapping',
+    'endpointMetadata',
+    'apiEndpoint',
+    'sections',
+    'rows',
+    'columns',
+    'fieldCodes',
+    'fields',
+    'returnItemsList',
+    'dynamicItemsList',
+  ];
+
+  const presentForbidden = forbiddenDefinitionKeys.filter((k) => req.body[k] !== undefined);
+  if (presentForbidden.length > 0 && activeUser.role === 'MAKER') {
+    res.status(403).json({
+      error: `REPORT_DEFINITION_IMMUTABLE: Maker cannot change report definition metadata ('${presentForbidden.join(', ')}'). Only business values and schedule data entry are allowed.`,
+      code: 'REPORT_DEFINITION_IMMUTABLE',
+    });
+    return;
+  }
+
   try {
     const updated = submissionService.updateDraft(
       req.params.id,
@@ -923,13 +1230,23 @@ app.get('/api/regulatory/submissions/:id/export/xlsx', (req, res) => {
 // -------------------------------------------------------------
 
 app.post('/api/auth/login', (req, res) => {
-  const { email, password } = req.body;
+  const { email, password, rememberMe } = req.body;
   if (!email || !password) {
     res.status(400).json({ success: false, message: 'Corporate email and password are required to sign in.' });
     return;
   }
-  const result = userService.login(email, password);
+  const deviceInfo = (req.headers['user-agent'] as string) || 'Institutional Workstation';
+  const result = userService.login(email, password, Boolean(rememberMe), deviceInfo);
+
   if (result.success && result.user) {
+    // If Remember Me was requested, set secure HttpOnly cookie
+    if (result.rememberMe && result.persistentSession) {
+      res.setHeader('Set-Cookie', result.persistentSession.cookieHeader);
+    } else {
+      // If unchecked, ensure any leftover persistent cookie is cleared
+      res.setHeader('Set-Cookie', sessionService.formatClearedCookieHeader());
+    }
+
     auditService.log({
       actorId: result.user.id,
       actorName: result.user.name,
@@ -938,12 +1255,119 @@ app.post('/api/auth/login', (req, res) => {
       entityType: 'AUTH',
       entityId: result.user.id,
       correlationId: `corr_auth_${Date.now()}`,
-      details: `User logged in successfully as ${result.user.role}`,
+      details: `User logged in successfully as ${result.user.role}. Remember Me: ${Boolean(rememberMe)}. (Req 1, 4)`,
     });
     res.json(result);
   } else {
     res.status(401).json(result);
   }
+});
+
+// Phase 29: Persistent Session Verification Endpoint (Req 4, 6, 7, 8, 9, 10, 12)
+app.get('/api/auth/session', (req, res) => {
+  const cookieHeader = req.headers.cookie;
+  let token = sessionService.extractTokenFromCookieHeader(cookieHeader);
+  if (!token && req.headers.authorization?.startsWith('Bearer ')) {
+    token = req.headers.authorization.slice(7).trim();
+  }
+  if (!token && req.headers['x-remember-token']) {
+    token = String(req.headers['x-remember-token']).trim();
+  }
+
+  if (!token) {
+    res.status(401).json({
+      success: false,
+      code: 'NO_SESSION',
+      message: 'No active persistent session found.',
+    });
+    return;
+  }
+
+  const ver = sessionService.verifyToken(token, { updateLastUsed: true });
+  if (!ver.valid || !ver.user || !ver.session) {
+    res.setHeader('Set-Cookie', sessionService.formatClearedCookieHeader());
+    res.status(401).json({
+      success: false,
+      code: ver.code || 'TOKEN_INVALID',
+      message: ver.message || 'Session verification failed.',
+    });
+    return;
+  }
+
+  // Session is valid
+  res.json({
+    success: true,
+    user: ver.user,
+    session: {
+      id: ver.session.id,
+      expiresAt: ver.session.expiresAt,
+      lastUsedAt: ver.session.lastUsedAt,
+      createdAt: ver.session.createdAt,
+      deviceInfo: ver.session.deviceInfo,
+    },
+    requiresBiometricVerification: ver.requiresBiometricVerification,
+  });
+});
+
+// Phase 29: Explicit Logout Endpoint (Req 8)
+app.post('/api/auth/logout', (req, res) => {
+  const cookieHeader = req.headers.cookie;
+  let token = sessionService.extractTokenFromCookieHeader(cookieHeader);
+  if (!token && req.headers.authorization?.startsWith('Bearer ')) {
+    token = req.headers.authorization.slice(7).trim();
+  }
+  if (!token && req.headers['x-remember-token']) {
+    token = String(req.headers['x-remember-token']).trim();
+  }
+  const sessionId = req.body?.sessionId || token;
+
+  if (sessionId) {
+    sessionService.revokeSession(sessionId, 'EXPLICIT_LOGOUT');
+  }
+
+  res.setHeader('Set-Cookie', sessionService.formatClearedCookieHeader());
+  res.json({
+    success: true,
+    message: 'Explicit portal sign out complete. Persistent session permanently invalidated. (Req 8)',
+  });
+});
+
+// Phase 29: List Active Sessions for User (Req 7, 11)
+app.get('/api/auth/sessions', (req, res) => {
+  const email = (req.query.email as string) || '';
+  if (!email) {
+    res.status(400).json({ success: false, message: 'Email query parameter required.' });
+    return;
+  }
+  const activeSessions = sessionService.getUserActiveSessions(email);
+  res.json({
+    success: true,
+    sessions: activeSessions.map((s) => ({
+      id: s.id,
+      deviceInfo: s.deviceInfo,
+      createdAt: s.createdAt,
+      lastUsedAt: s.lastUsedAt,
+      expiresAt: s.expiresAt,
+      isRevoked: s.isRevoked,
+    })),
+  });
+});
+
+// Phase 29: Revoke Session Endpoint (Req 7, 11)
+app.post('/api/auth/sessions/revoke', (req, res) => {
+  const { sessionId, email, revokeAll } = req.body;
+  if (revokeAll && email) {
+    const result = sessionService.revokeAllUserSessions(email, 'ADMIN_REVOCATION');
+    res.json({ success: true, message: `All ${result.revokedCount} active sessions revoked.` });
+    return;
+  }
+  if (sessionId) {
+    const rev = sessionService.revokeSession(sessionId, 'ADMIN_REVOCATION');
+    res.setHeader('Set-Cookie', rev.clearedCookieHeader);
+    res.json({ success: true, message: rev.message });
+    return;
+  }
+  res.status(400).json({ success: false, message: 'sessionId or email with revokeAll required.' });
 });
 
 // Development Seed Data Reset Endpoint
@@ -2147,6 +2571,66 @@ app.post(['/api/audit/reports/export', '/api/v1/audit/reports/export'], (req, re
 
 const DJANGO_SIMULATOR_URL = process.env.NBE_SIMULATOR_URL || 'http://127.0.0.1:8001/api/v1/nbe-simulator';
 
+// Dynamic Report Discovery for NBE Simulator (Phase 32)
+// Discovers all active and draft reports dynamically from SSOT, filtering retired reports
+app.get('/api/nbe-simulator/reports', (req, res) => {
+  const actorRole = (req.headers['x-actor-role'] || req.query.role || 'ADMIN') as string;
+  if (actorRole && actorRole !== 'ADMIN') {
+    res.status(403).json({
+      error: 'Forbidden: NBE Simulator access is strictly restricted to Administrators.',
+      code: 'UNAUTHORIZED_SIMULATOR_ACCESS',
+    });
+    return;
+  }
+  try {
+    const reports = nbeSimulator.getAvailableReports();
+    res.json(reports);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Build canonical simulated payload from active/draft template
+app.get('/api/nbe-simulator/reports/:key/payload', (req, res) => {
+  const actorRole = (req.headers['x-actor-role'] || req.query.role || 'ADMIN') as string;
+  if (actorRole && actorRole !== 'ADMIN') {
+    res.status(403).json({
+      error: 'Forbidden: NBE Simulator access is strictly restricted to Administrators.',
+      code: 'UNAUTHORIZED_SIMULATOR_ACCESS',
+    });
+    return;
+  }
+  try {
+    const versionNum = req.query.version ? parseInt(req.query.version as string, 10) : undefined;
+    const payload = nbeSimulator.buildSimulatedPayload(req.params.key, versionNum);
+    res.json(payload);
+  } catch (err: any) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Dynamic simulated transmission for any report
+app.post('/api/nbe-simulator/reports/:key/transmit', async (req, res) => {
+  const actorRole = (req.headers['x-actor-role'] || req.body.role || req.body.actor?.role || 'ADMIN') as string;
+  if (actorRole && actorRole !== 'ADMIN') {
+    res.status(403).json({
+      error: 'Forbidden: NBE Simulator transmission is strictly restricted to Administrators.',
+      code: 'UNAUTHORIZED_SIMULATOR_ACCESS',
+    });
+    return;
+  }
+  try {
+    const result = await nbeSimulator.simulateReportTransmission(req.params.key, {
+      customPayload: req.body.payload,
+      scenarioOverride: req.body.scenario,
+      idempotencyKey: req.body.idempotencyKey,
+    });
+    res.status(result.statusCode).json(result);
+  } catch (err: any) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
 app.get('/api/nbe-simulator/submissions', async (req, res) => {
   const { page, page_size, limit } = req.query as any;
   let submissions: any[] = [];
@@ -2542,7 +3026,7 @@ app.post('/api/bulk/export', (req, res) => {
 });
 
 // System Health
-app.get('/api/health', (req, res) => {
+const healthHandler = (_req: express.Request, res: express.Response) => {
   res.json({
     status: 'ONLINE',
     service: 'Oromia Bank NBE Platform',
@@ -2552,13 +3036,19 @@ app.get('/api/health', (req, res) => {
     uptimeSeconds: Math.floor(process.uptime()),
     timestamp: new Date().toISOString(),
   });
-});
+};
+app.get('/api/health', healthHandler);
+app.get('/health', healthHandler);
+app.get('/healthz', healthHandler);
 
 // -------------------------------------------------------------
 // DEV / PROD SERVER BOOTSTRAP
 // -------------------------------------------------------------
 
 function ensureDjangoSimulatorRunning() {
+  if (process.env.NODE_ENV === 'production' || process.env.K_SERVICE) {
+    return;
+  }
   const checkUrl = 'http://127.0.0.1:8001/api/v1/nbe-simulator/gateway-health';
   fetch(checkUrl, { signal: AbortSignal.timeout(1500) })
     .then((r) => {
@@ -2587,19 +3077,30 @@ function ensureDjangoSimulatorRunning() {
 async function startServer() {
   ensureDjangoSimulatorRunning();
 
-  if (process.env.NODE_ENV !== 'production') {
+  const isCloudRun = Boolean(process.env.K_SERVICE);
+  const distIndexHtml = path.resolve(__dirname, 'dist', 'index.html');
+  const distExists = fs.existsSync(distIndexHtml);
+
+  if (distExists) {
+    // Production / pre-built static serving
+    app.use(express.static(path.resolve(__dirname, 'dist')));
+    app.get('*', (req, res, next) => {
+      if (req.path.startsWith('/api/') || req.path.startsWith('/ws/')) {
+        return next();
+      }
+      if (fs.existsSync(distIndexHtml)) {
+        return res.sendFile(distIndexHtml);
+      }
+      return next();
+    });
+  } else {
+    // Vite middleware mode for development or when dist not yet built
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: 'spa',
     });
     app.use(vite.middlewares);
-  } else {
-    // Production static serving
-    app.use(express.static(path.resolve(__dirname, 'dist')));
-    app.get('*', (req, res) => {
-      res.sendFile(path.resolve(__dirname, 'dist', 'index.html'));
-    });
   }
 
   const server = http.createServer(app);

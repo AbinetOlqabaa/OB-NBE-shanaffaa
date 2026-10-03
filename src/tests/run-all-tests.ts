@@ -373,6 +373,15 @@ import { runPhase24ValidationRemediationAssistantTests } from './phase24-validat
 import { runPhase25XlsxNbeOfflineExportTests } from './phase25-xlsx-nbe-offline-export.test.ts';
 import { runPhase25LibraryCoreAndMakerLibraryTests } from './phase25-library-core-architecture-maker-library.test.ts';
 import { runPhase26PasswordAndPriorEnrollmentBiometricResetTests } from './phase26-password-and-prior-enrollment-biometric-reset.test.ts';
+import { runPhase26LibraryRoleBasedWorkflowsAndDeletionGovernanceTests } from './phase26-library-role-based-workflows-and-deletion-governance.test.ts';
+import { runPhase27SsotAutosavePersistenceRecoveryTests } from './phase27-ssot-autosave-persistence-recovery.test.ts';
+import { runPhase28LogoutConfirmationAndDashboardResponsibilityCleanupTests } from './phase28-logout-confirmation-and-dashboard-responsibility-cleanup.test.ts';
+import { runPhase29RememberMeEndToEndAuthenticationTests } from './phase29-remember-me-end-to-end-authentication.test.ts';
+import { runPhase30FullIntegrationSecurityRegressionAcceptanceTests } from './phase30-full-integration-security-regression-acceptance.test.ts';
+import { runPhase31NbeJsonReportPackageImportAndSchemaNormalizationTests } from './phase31-nbe-json-report-package-import-and-schema-normalization.test.ts';
+import { runPhase32DynamicNbeApiEndpointRegistryAndSimulatorIntegrationTests } from './phase32-dynamic-nbe-api-endpoint-registry-and-simulator-integration.test.ts';
+import { runPhase33EmptyTemplateInitializationAndMakerDataEntryTests } from './phase33-empty-template-initialization-and-maker-data-entry.test.ts';
+import { runPhase34AdminTemplateGovernanceAndMakerTitleImmutabilityTests } from './phase34-admin-template-governance-and-maker-title-immutability.test.ts';
 import { runXlsxExportAndDynamicValidationTests } from './xlsx-export-and-dynamic-validation.test.ts';
 
 async function runFullApplicationTestSuite() {
@@ -403,6 +412,15 @@ async function runFullApplicationTestSuite() {
   await runPhase25XlsxNbeOfflineExportTests();
   await runPhase25LibraryCoreAndMakerLibraryTests();
   await runPhase26PasswordAndPriorEnrollmentBiometricResetTests();
+  await runPhase26LibraryRoleBasedWorkflowsAndDeletionGovernanceTests();
+  await runPhase27SsotAutosavePersistenceRecoveryTests();
+  await runPhase28LogoutConfirmationAndDashboardResponsibilityCleanupTests();
+  await runPhase29RememberMeEndToEndAuthenticationTests();
+  await runPhase30FullIntegrationSecurityRegressionAcceptanceTests();
+  await runPhase31NbeJsonReportPackageImportAndSchemaNormalizationTests();
+  await runPhase32DynamicNbeApiEndpointRegistryAndSimulatorIntegrationTests();
+  await runPhase33EmptyTemplateInitializationAndMakerDataEntryTests();
+  await runPhase34AdminTemplateGovernanceAndMakerTitleImmutabilityTests();
   await runXlsxExportAndDynamicValidationTests();
   await runPdfAndSnapshotTests();
   await runIndexedDbOfflineStorageTests();
