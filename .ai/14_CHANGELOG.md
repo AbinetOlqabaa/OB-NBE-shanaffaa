@@ -4,6 +4,38 @@ All notable changes and engineering enhancements for the Oromia Bank NBE Regulat
 
 ---
 
+## [35.0.0-phase35-role-locked-dashboards-and-notification-navigation] - 2026-10-03
+
+### Added & Enhanced
+- **Phase 35: Role-Locked Dashboards & Notification-Centered Navigation (`35_ROLE_LOCKED_DASHBOARDS_AND_NOTIFICATION_NAVIGATION.md`, `src/tests/phase35-role-locked-dashboards-and-notification-navigation.test.ts`)**:
+  - **Required Role Access Model (Single-Role Workspaces)**:
+    - `ADMIN` → Administrator Dashboard only (`ADMIN_DASHBOARD`, plus admin utilities `DEPT_REPORT_MANAGEMENT`, `NBE_SIMULATOR`, `PHASE2_SSOT`, `SYSTEM_HEALTH`). Cross-dashboard access to Maker Workspace, Checker Inbox, and Auditor Dashboard strictly prohibited.
+    - `MAKER` → Maker Workspace only (`MAKER_WORKSPACE`, plus `LIBRARY`, `DOCUMENTATION`). Cross-dashboard access to Admin, Checker, Auditor, and NBE Simulator strictly prohibited.
+    - `CHECKER` → Checker Inbox only (`CHECKER_INBOX`, plus `LIBRARY`, `AUDIT_TRAIL`, `DOCUMENTATION`). Cross-dashboard access to Admin, Maker, Auditor, and NBE Simulator strictly prohibited.
+    - `AUDITOR` → Auditor Dashboard only (`AUDITOR_DASHBOARD`, plus `LIBRARY`, `AUDIT_TRAIL`, `DOCUMENTATION`). Cross-dashboard access to Admin, Maker, Checker, and NBE Simulator strictly prohibited.
+  - **Rejection & Redirection Across All Navigation Channels**:
+    - Navbar controls, dropdowns, direct URL parameters (`?tab=...`), hash navigation, browser popstate history, universal command palette (`Ctrl+K`), sidebar navigation, mobile bottom navigation, and swipe gestures are strictly role-locked.
+    - Forged or unauthorized route access attempts trigger security audit logs and automatically redirect users to their role's authorized default dashboard.
+  - **NBE Simulator Segregation**:
+    - NBE Simulator completely removed from Maker, Checker, and Auditor dashboards.
+    - Retained strictly in Administrator dashboard.
+    - Backend endpoints (`/api/nbe-simulator/submissions`, `/api/nbe-simulator/logs`, `/api/nbe-simulator/scenario`) reject non-admin roles with 403 Forbidden.
+  - **Navbar Transformation & Notification Bell**:
+    - Eliminated the dashboard-switching dropdown (`<select aria-label="Switch User Role">`) from the authenticated navbar; replaced with authoritative read-only role indicator badge.
+    - Added notification bell icon with live unread count badge.
+    - Clicking the bell opens the user's accessible Notification Center dialog (`src/components/NotificationCenter.tsx`).
+    - Authoritative server-side notification service (`src/services/notificationService.ts`) with endpoints `GET /api/notifications`, `POST /api/notifications/:id/read`, `POST /api/notifications/read-all`.
+    - Sensible grouping into `WORKFLOW`, `GOVERNANCE`, `SECURITY`, and `SYSTEM` categories.
+    - Read/unread toggle and mark-all-read support.
+  - **Cross-Department Notification Leakage Protection**:
+    - Server-side filtering strictly shields other departments' report keys and sensitive metadata from unauthorized makers and checkers.
+  - **Maker Navbar Clutter Cleanup**:
+    - Removed the two specified unimportant icons beside the OB logo (`Building2` / "Financial Year 2026" ribbon and `pendingCheckerCount` awaiting review badge) for Maker while preserving required navigation drawer toggles and accessibility controls.
+  - **Accessibility & Touch Standards**:
+    - Complies with WCAG 2.1 AA touch targets (min 44×44px), ARIA dialog attributes, and keyboard shortcuts.
+
+---
+
 ## [30.0.0-phase30-full-integration-security-regression-acceptance] - 2026-10-02
 
 ### Added & Enhanced

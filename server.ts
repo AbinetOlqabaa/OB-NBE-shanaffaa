@@ -35,6 +35,7 @@ import { ValidationRemediationService } from './src/services/validationRemediati
 import { sessionService } from './src/services/sessionService.ts';
 import { nbeReportPackageService } from './src/services/nbeReportPackageNormalizer.ts';
 import { nbeEndpointRegistry } from './src/services/nbeEndpointRegistry.ts';
+import { notificationService } from './src/services/notificationService.ts';
 
 dotenv.config();
 
@@ -684,18 +685,68 @@ app.get('/api/governance/proposals/:id/explain', (req, res) => {
   }
 });
 
-// Get user notifications
-app.get('/api/governance/notifications', (req, res) => {
-  const userId = req.query.userId as string;
-  if (userId) {
-    res.json(configurationGovernanceService.getNotificationsForUser(userId));
-  } else {
-    res.json(configurationGovernanceService.getAllNotifications());
+// Helper to resolve requesting user for notifications
+function resolveRequestingUser(req: express.Request) {
+  const userId = (req.query.userId || req.headers['x-actor-id'] || req.body?.userId) as string;
+  const userEmail = (req.query.userEmail || req.headers['x-actor-email'] || req.body?.userEmail) as string;
+  const headerRole = (req.headers['x-actor-role'] || req.query.role || req.body?.role) as string;
+  const headerDept = (req.headers['x-actor-department'] || req.query.department || req.body?.department) as string;
+
+  let user: any = null;
+  if (userEmail) {
+    user = userService.getByEmail(userEmail);
   }
+  if (!user && userId) {
+    user = userService.getById(userId);
+  }
+  if (!user) {
+    user = {
+      id: userId || 'anonymous',
+      email: userEmail || '',
+      role: headerRole || 'MAKER',
+      department: headerDept || 'Credit Operations & Portfolio Management',
+      allowedReportKeys: [],
+    };
+  } else {
+    if (headerRole) user.role = headerRole;
+    if (headerDept) user.department = headerDept;
+  }
+  if (!user.allowedReportKeys || user.allowedReportKeys.length === 0) {
+    user.allowedReportKeys = userService.getAllowedReportKeysForUser(user);
+  }
+  return user;
+}
+
+// Authoritative Notification Center API (Phase 35)
+app.get('/api/notifications', (req, res) => {
+  const user = resolveRequestingUser(req);
+  const result = notificationService.getNotificationsForUser(user);
+  res.json(result);
+});
+
+// Mark single notification as read
+app.post('/api/notifications/:id/read', (req, res) => {
+  const success = notificationService.markAsRead(req.params.id);
+  res.json({ success });
+});
+
+// Mark all notifications as read for current user
+app.post('/api/notifications/read-all', (req, res) => {
+  const user = resolveRequestingUser(req);
+  const count = notificationService.markAllAsReadForUser(user);
+  res.json({ success: true, count });
+});
+
+// Get user governance notifications (backward compatibility with server-side filtering)
+app.get('/api/governance/notifications', (req, res) => {
+  const user = resolveRequestingUser(req);
+  const result = notificationService.getNotificationsForUser(user);
+  res.json(result.notifications);
 });
 
 // Mark notification as read
 app.post('/api/governance/notifications/:id/read', (req, res) => {
+  notificationService.markAsRead(req.params.id);
   configurationGovernanceService.markNotificationAsRead(req.params.id);
   res.json({ success: true });
 });
@@ -2632,6 +2683,14 @@ app.post('/api/nbe-simulator/reports/:key/transmit', async (req, res) => {
 });
 
 app.get('/api/nbe-simulator/submissions', async (req, res) => {
+  const actorRole = (req.headers['x-actor-role'] || req.query.role || 'ADMIN') as string;
+  if (actorRole && actorRole !== 'ADMIN') {
+    res.status(403).json({
+      error: 'Forbidden: NBE Simulator access is strictly restricted to Administrators.',
+      code: 'UNAUTHORIZED_SIMULATOR_ACCESS',
+    });
+    return;
+  }
   const { page, page_size, limit } = req.query as any;
   let submissions: any[] = [];
   try {
@@ -2654,6 +2713,14 @@ app.get('/api/nbe-simulator/submissions', async (req, res) => {
 });
 
 app.get('/api/nbe-simulator/logs', async (req, res) => {
+  const actorRole = (req.headers['x-actor-role'] || req.query.role || 'ADMIN') as string;
+  if (actorRole && actorRole !== 'ADMIN') {
+    res.status(403).json({
+      error: 'Forbidden: NBE Simulator access is strictly restricted to Administrators.',
+      code: 'UNAUTHORIZED_SIMULATOR_ACCESS',
+    });
+    return;
+  }
   const { page, page_size, limit } = req.query as any;
   let logs: any[] = [];
   try {
@@ -2725,6 +2792,14 @@ app.get('/api/nbe-simulator/gateway-health', async (req, res) => {
 });
 
 app.get('/api/nbe-simulator/scenario', async (req, res) => {
+  const actorRole = (req.headers['x-actor-role'] || req.query.role || 'ADMIN') as string;
+  if (actorRole && actorRole !== 'ADMIN') {
+    res.status(403).json({
+      error: 'Forbidden: NBE Simulator access is strictly restricted to Administrators.',
+      code: 'UNAUTHORIZED_SIMULATOR_ACCESS',
+    });
+    return;
+  }
   try {
     const response = await fetch(`${DJANGO_SIMULATOR_URL}/scenario`);
     if (response.ok) {
@@ -2739,6 +2814,14 @@ app.get('/api/nbe-simulator/scenario', async (req, res) => {
 });
 
 app.post('/api/nbe-simulator/scenario', async (req, res) => {
+  const actorRole = (req.headers['x-actor-role'] || req.query.role || req.body?.role || 'ADMIN') as string;
+  if (actorRole && actorRole !== 'ADMIN') {
+    res.status(403).json({
+      error: 'Forbidden: NBE Simulator access is strictly restricted to Administrators.',
+      code: 'UNAUTHORIZED_SIMULATOR_ACCESS',
+    });
+    return;
+  }
   const updatedLocal = nbeSimulator.setScenario(req.body);
   try {
     const response = await fetch(`${DJANGO_SIMULATOR_URL}/scenario`, {
