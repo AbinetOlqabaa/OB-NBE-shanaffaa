@@ -772,21 +772,24 @@ export default function App() {
     }
   };
 
-  // Submit to Checker for approval
-  const handleSubmitToChecker = (subId: string, comment?: string) => {
+  // Submit to Checker for approval (Phase 36: supports selectedCheckerIds)
+  const handleSubmitToChecker = (subId: string, comment?: string, selectedCheckerIds?: string[]) => {
     if (!currentUser) return;
     try {
       vibrate([25, 40, 35]);
       const updated = submissionService.submitToChecker(
         subId,
         currentUser,
-        comment || 'Prepared and submitted for Checker review.'
+        comment || 'Prepared and submitted for Checker review.',
+        undefined,
+        selectedCheckerIds
       );
       setSubmissions(submissionService.getAll());
       if (editingSubmission?.id === subId) {
         setEditingSubmission(updated);
       }
-      showToast(`Return ${updated.reportKey} submitted to Checker queue for 4-eyes sign-off.`);
+      const count = updated.assignedCheckerIds?.length || 1;
+      showToast(`Return ${updated.reportKey} submitted to ${count} assigned Checker(s) [${updated.checkerName || 'Checker'}] for 4-eyes sign-off.`);
     } catch (err: any) {
       alert(`Submission error: ${err.message}`);
     }
@@ -910,6 +913,9 @@ export default function App() {
         onNavigateToSimulator={() => {
           handleSafeTabChange('NBE_SIMULATOR');
         }}
+        onSelectTab={(tab) => {
+          handleSafeTabChange(tab as ViewTab);
+        }}
       />
 
       {/* 2. Main Window Container (Equal Full Length between Sidebar and Viewport) */}
@@ -974,8 +980,8 @@ export default function App() {
               }
               onBack={handleCloseEditingSubmission}
               onSave={handleSaveDraft}
-              onSubmitToChecker={(comment, expectedVer) => {
-                handleSubmitToChecker(editingSubmission.id, comment);
+              onSubmitToChecker={(comment, expectedVer, selectedCheckerIds) => {
+                handleSubmitToChecker(editingSubmission.id, comment, selectedCheckerIds);
               }}
               onReuseSubmission={handleReuseSubmission}
               onRegisterNavigationGuard={(guard) => {

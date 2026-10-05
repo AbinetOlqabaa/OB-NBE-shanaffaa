@@ -1169,17 +1169,59 @@ app.post('/api/regulatory/validate-payload', (req, res) => {
   }
 });
 
-// Maker submit to Checker
+// Phase 36: Get eligible Checkers for a Maker and report
+app.get('/api/regulatory/eligible-checkers', (req, res) => {
+  const reportKey = req.query.reportKey as string;
+  const makerId = req.query.makerId as string;
+  const submissionId = req.query.submissionId as string;
+
+  if (!reportKey) {
+    res.status(400).json({ error: 'Missing required query parameter: reportKey' });
+    return;
+  }
+
+  const makerUser = (makerId ? userService.getById(makerId) : null) || resolveRequestingUser(req);
+  const sub = submissionId ? submissionService.getById(submissionId) : undefined;
+  const eligible = userService.getEligibleCheckersForSubmission(makerUser, reportKey, sub);
+  res.json(eligible);
+});
+
+// Maker submit to Checker (Phase 36: Supports selectedCheckerIds)
 app.post('/api/regulatory/submissions/:id/submit', (req, res) => {
-  const { user, comment, expectedVersion } = req.body;
+  const { user, comment, expectedVersion, selectedCheckerIds } = req.body;
   const activeUser = user || DEMO_USERS[0];
   try {
     const updated = submissionService.submitToChecker(
       req.params.id,
       activeUser,
       comment,
-      expectedVersion !== undefined ? Number(expectedVersion) : undefined
+      expectedVersion !== undefined ? Number(expectedVersion) : undefined,
+      selectedCheckerIds
     );
+    res.json(updated);
+  } catch (err: any) {
+    res.status(getAuthOrClientStatusCode(err.message)).json({ error: err.message });
+  }
+});
+
+// Checker open/claim review (Phase 36: Notifies Maker of active review)
+app.post('/api/regulatory/submissions/:id/open-review', (req, res) => {
+  const { user } = req.body;
+  const activeUser = user || DEMO_USERS[1];
+  try {
+    const updated = submissionService.openReview(req.params.id, activeUser);
+    res.json(updated);
+  } catch (err: any) {
+    res.status(getAuthOrClientStatusCode(err.message)).json({ error: err.message });
+  }
+});
+
+// Reassign Checkers (Phase 36)
+app.post('/api/regulatory/submissions/:id/reassign-checkers', (req, res) => {
+  const { user, newCheckerIds, reason } = req.body;
+  const activeUser = user || DEMO_USERS[0];
+  try {
+    const updated = submissionService.reassignCheckers(req.params.id, activeUser, newCheckerIds, reason);
     res.json(updated);
   } catch (err: any) {
     res.status(getAuthOrClientStatusCode(err.message)).json({ error: err.message });
